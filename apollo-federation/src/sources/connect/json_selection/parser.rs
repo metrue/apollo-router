@@ -268,7 +268,7 @@ pub enum NamedSelection {
 // entirely from its children, so NamedSelection itself does not need to provide
 // separate storage for its own range, and therefore does not need to be wrapped
 // as WithRange<NamedSelection>, but merely needs to implement the Ranged trait.
-impl Ranged<NamedSelection> for NamedSelection {
+impl Ranged for NamedSelection {
     fn range(&self) -> OffsetRange {
         match self {
             Self::Field(alias, key, sub) => {
@@ -427,7 +427,7 @@ pub struct PathSelection {
 // entirely from self.path (a WithRange<PathList>), so PathSelection itself does
 // not need to be wrapped as WithRange<PathSelection>, but merely needs to
 // implement the Ranged trait.
-impl Ranged<PathSelection> for PathSelection {
+impl Ranged for PathSelection {
     fn range(&self) -> OffsetRange {
         self.path.range()
     }
@@ -879,7 +879,7 @@ pub struct SubSelection {
     pub(super) range: OffsetRange,
 }
 
-impl Ranged<SubSelection> for SubSelection {
+impl Ranged for SubSelection {
     // Since SubSelection is a struct, we can store its range directly as a
     // field of the struct, allowing SubSelection to implement the Ranged trait
     // without a WithRange<SubSelection> wrapper.
@@ -985,7 +985,7 @@ pub struct Alias {
     pub(super) range: OffsetRange,
 }
 
-impl Ranged<Alias> for Alias {
+impl Ranged for Alias {
     fn range(&self) -> OffsetRange {
         self.range.clone()
     }
@@ -1179,7 +1179,7 @@ pub(super) struct MethodArgs {
     pub(super) range: OffsetRange,
 }
 
-impl Ranged<MethodArgs> for MethodArgs {
+impl Ranged for MethodArgs {
     fn range(&self) -> OffsetRange {
         self.range.clone()
     }
