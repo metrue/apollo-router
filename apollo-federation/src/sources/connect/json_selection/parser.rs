@@ -11,6 +11,7 @@ use nom::combinator::opt;
 use nom::combinator::recognize;
 use nom::error::ParseError;
 use nom::multi::many0;
+use nom::sequence::delimited;
 use nom::sequence::pair;
 use nom::sequence::preceded;
 use nom::sequence::terminated;
@@ -881,6 +882,7 @@ impl ExternalVarPaths for PathList {
 pub struct SubSelection {
     pub(super) selections: Vec<NamedSelection>,
     pub(super) range: OffsetRange,
+    pub(super) output_shape: Option<WithRange<String>>,
 }
 
 impl Ranged for SubSelection {
@@ -907,6 +909,7 @@ impl SubSelection {
                 remainder,
                 Self {
                     selections: sub.selections,
+                    output_shape: sub.output_shape,
                     range,
                 },
             )
@@ -914,15 +917,28 @@ impl SubSelection {
     }
 
     fn parse_naked(input: Span) -> ParseResult<Self> {
-        preceded(spaces_or_comments, many0(NamedSelection::parse))(input).map(
-            |(remainder, selections)| {
-                let range = merge_ranges(
-                    selections.first().and_then(|first| first.range()),
-                    selections.last().and_then(|last| last.range()),
-                );
-                (remainder, Self { selections, range })
-            },
-        )
+        tuple((
+            opt(delimited(
+                tuple((spaces_or_comments, char('<'))),
+                parse_identifier,
+                tuple((spaces_or_comments, char('>'))),
+            )),
+            many0(NamedSelection::parse),
+        ))(input)
+        .map(|(remainder, (output_shape, selections))| {
+            let range = merge_ranges(
+                selections.first().and_then(|first| first.range()),
+                selections.last().and_then(|last| last.range()),
+            );
+            (
+                remainder,
+                Self {
+                    output_shape,
+                    selections,
+                    range,
+                },
+            )
+        })
     }
 
     // Returns an Iterator over each &NamedSelection that contributes a single
@@ -2858,6 +2874,7 @@ mod tests {
                     None,
                 )],
                 range: Some(0..5),
+                ..Default::default()
             }),
         );
 
@@ -2870,6 +2887,7 @@ mod tests {
                     None,
                 )],
                 range: Some(2..7),
+                ..Default::default()
             }),
         );
 
@@ -2893,9 +2911,11 @@ mod tests {
                             ),
                         ],
                         range: Some(9..20),
+                        ..Default::default()
                     }),
                 )],
                 range: Some(2..20),
+                ..Default::default()
             }),
         );
 
@@ -2994,6 +3014,7 @@ mod tests {
                                                         ),
                                                     ],
                                                     range: Some(28..37),
+                                                    ..Default::default()
                                                 }),
                                                 Some(28..37),
                                             ),
@@ -3012,6 +3033,7 @@ mod tests {
                     ),
                 ],
                 range: Some(0..42),
+                ..Default::default()
             }),
         );
     }
