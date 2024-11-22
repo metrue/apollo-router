@@ -666,6 +666,7 @@ mod tests {
                         range: Some(
                             0..7,
                         ),
+                        output_shape: None,
                     },
                 ),
                 config: None,
@@ -790,6 +791,7 @@ mod tests {
                         range: Some(
                             0..13,
                         ),
+                        output_shape: None,
                     },
                 ),
                 config: None,
