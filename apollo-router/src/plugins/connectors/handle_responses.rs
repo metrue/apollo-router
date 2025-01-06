@@ -9,9 +9,8 @@ use tracing::Span;
 
 use crate::graphql;
 use crate::json_ext::Path;
-use crate::plugins::connectors::http::Response as ConnectorResponse;
-use crate::plugins::connectors::http::Result as ConnectorResult;
 use crate::plugins::connectors::make_requests::ResponseKey;
+use crate::plugins::connectors::plugin::debug::aggregate_apply_to_errors;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::plugins::connectors::plugin::debug::ConnectorDebugHttpRequest;
 use crate::plugins::connectors::plugin::debug::SelectionData;
@@ -19,8 +18,12 @@ use crate::plugins::telemetry::consts::OTEL_STATUS_CODE;
 use crate::plugins::telemetry::consts::OTEL_STATUS_CODE_ERROR;
 use crate::plugins::telemetry::consts::OTEL_STATUS_CODE_OK;
 use crate::services::connect::Response;
+use crate::services::connector::request_service::transport::http::HttpResponse;
+use crate::services::connector::request_service::Error;
+use crate::services::connector::request_service::TransportResponse;
 use crate::services::fetch::AddSubgraphNameExt;
 use crate::services::router;
+use crate::services::router::body::RouterBody;
 use crate::Context;
 
 const ENTITIES: &str = "_entities";
@@ -56,17 +59,17 @@ enum RawResponse {
 }
 
 impl RawResponse {
-    /// Returns a `MappedResponse` with the response data transformed by the
-    /// selection mapping.
+    /// Returns a response with data transformed by the selection mapping.
     ///
     /// As a side effect, this will also write to the debug context.
     fn map_response(
         self,
+        result: Result<TransportResponse, Error>,
         connector: &Connector,
         context: &Context,
         debug_context: &Option<Arc<Mutex<ConnectorContext>>>,
-    ) -> MappedResponse {
-        match self {
+    ) -> crate::services::connector::request_service::Response {
+        let mapped_response = match self {
             RawResponse::Error { error, key } => MappedResponse::Error { error, key },
             RawResponse::Data {
                 data,
@@ -92,7 +95,7 @@ impl RawResponse {
                             source: connector.selection.to_string(),
                             transformed: key.selection().to_string(),
                             result: res.clone(),
-                            errors: apply_to_errors,
+                            errors: apply_to_errors.clone(),
                         }),
                     );
                 }
@@ -100,8 +103,16 @@ impl RawResponse {
                 MappedResponse::Data {
                     key,
                     data: res.unwrap_or_else(|| Value::Null),
+                    problems: aggregate_apply_to_errors(&apply_to_errors),
                 }
             }
+        };
+
+        crate::services::connector::request_service::Response {
+            context: context.clone(),
+            connector: connector.clone(),
+            transport_result: result,
+            mapped_response,
         }
     }
 
@@ -113,13 +124,14 @@ impl RawResponse {
     // error with the status code.
     fn map_error(
         self,
+        result: Result<TransportResponse, Error>,
         connector: &Connector,
-        _context: &Context,
+        context: &Context,
         debug_context: &Option<Arc<Mutex<ConnectorContext>>>,
-    ) -> MappedResponse {
+    ) -> crate::services::connector::request_service::Response {
         use serde_json_bytes::*;
 
-        match self {
+        let mapped_response = match self {
             RawResponse::Error { error, key } => MappedResponse::Error { error, key },
             RawResponse::Data {
                 key,
@@ -157,12 +169,19 @@ impl RawResponse {
 
                 MappedResponse::Error { error, key }
             }
+        };
+
+        crate::services::connector::request_service::Response {
+            context: context.clone(),
+            connector: connector.clone(),
+            transport_result: result,
+            mapped_response,
         }
     }
 }
 
 // --- MAPPED RESPONSE ---------------------------------------------------------
-
+#[derive(Debug)]
 pub(crate) enum MappedResponse {
     /// This is equivalent to RawResponse::Error, but it also represents errors
     /// when the request is semantically unsuccessful (e.g. 404, 500).
@@ -170,8 +189,12 @@ pub(crate) enum MappedResponse {
         error: graphql::Error,
         key: ResponseKey,
     },
-    /// The is the response data after applying the selection mapping.
-    Data { data: Value, key: ResponseKey },
+    /// The response data after applying the selection mapping.
+    Data {
+        data: Value,
+        key: ResponseKey,
+        problems: Vec<Value>,
+    },
 }
 
 impl MappedResponse {
@@ -257,28 +280,35 @@ impl MappedResponse {
 
 // --- handle_responses --------------------------------------------------------
 
-pub(crate) async fn process_response<T: HttpBody>(
-    response: ConnectorResponse<T>,
+pub(crate) async fn process_response(
+    result: Result<http::Response<RouterBody>, Error>,
+    response_key: ResponseKey,
     connector: &Connector,
     context: &Context,
+    debug_request: Option<ConnectorDebugHttpRequest>,
     debug_context: &Option<Arc<Mutex<ConnectorContext>>>,
-) -> MappedResponse {
-    let response_key = response.key;
-    let debug_request = response.debug_request;
-
-    let raw = match response.result {
+) -> crate::services::connector::request_service::Response {
+    match result {
         // This occurs when we short-circuit the request when over the limit
-        ConnectorResult::Err(error) => RawResponse::Error {
-            error: error.to_graphql_error(connector, Some((&response_key).into())),
-            key: response_key,
-        },
-        ConnectorResult::HttpResponse(response) => {
+        Err(error) => {
+            let raw = RawResponse::Error {
+                error: error.to_graphql_error(connector, Some((&response_key).into())),
+                key: response_key,
+            };
+            Span::current().record(OTEL_STATUS_CODE, OTEL_STATUS_CODE_ERROR);
+            raw.map_error(Err(error), connector, context, debug_context)
+        }
+        Ok(response) => {
             let (parts, body) = response.into_parts();
+
+            let result = Ok(TransportResponse::Http(HttpResponse {
+                inner: parts.clone(),
+            }));
 
             // If this errors, it will write to the debug context because it
             // has access to the raw bytes, so we can't write to it again
             // in any RawResponse::Error branches.
-            match deserialize_response(
+            let raw = match deserialize_response(
                 body,
                 &parts,
                 connector,
@@ -298,19 +328,19 @@ pub(crate) async fn process_response<T: HttpBody>(
                     error,
                     key: response_key,
                 },
+            };
+            let is_success = match &raw {
+                RawResponse::Error { .. } => false,
+                RawResponse::Data { parts, .. } => parts.status.is_success(),
+            };
+            if is_success {
+                Span::current().record(OTEL_STATUS_CODE, OTEL_STATUS_CODE_OK);
+                raw.map_response(result, connector, context, debug_context)
+            } else {
+                Span::current().record(OTEL_STATUS_CODE, OTEL_STATUS_CODE_ERROR);
+                raw.map_error(result, connector, context, debug_context)
             }
         }
-    };
-
-    let is_success = match &raw {
-        RawResponse::Error { .. } => false,
-        RawResponse::Data { parts, .. } => parts.status.is_success(),
-    };
-
-    if is_success {
-        raw.map_response(connector, context, debug_context)
-    } else {
-        raw.map_error(connector, context, debug_context)
     }
 }
 
@@ -422,7 +452,6 @@ mod tests {
     use url::Url;
 
     use crate::plugins::connectors::handle_responses::process_response;
-    use crate::plugins::connectors::http::Response as ConnectorResponse;
     use crate::plugins::connectors::make_requests::ResponseKey;
     use crate::services::router;
     use crate::services::router::body::RouterBody;
@@ -475,27 +504,25 @@ mod tests {
 
         let res = super::aggregate_responses(vec![
             process_response(
-                ConnectorResponse {
-                    result: response1.into(),
-                    key: response_key1,
-                    debug_request: None,
-                },
+                Ok(response1),
+                response_key1,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
             process_response(
-                ConnectorResponse {
-                    result: response2.into(),
-                    key: response_key2,
-                    debug_request: None,
-                },
+                Ok(response2),
+                response_key2,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
         ])
         .unwrap();
 
@@ -577,27 +604,25 @@ mod tests {
 
         let res = super::aggregate_responses(vec![
             process_response(
-                ConnectorResponse {
-                    result: response1.into(),
-                    key: response_key1,
-                    debug_request: None,
-                },
+                Ok(response1),
+                response_key1,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
             process_response(
-                ConnectorResponse {
-                    result: response2.into(),
-                    key: response_key2,
-                    debug_request: None,
-                },
+                Ok(response2),
+                response_key2,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
         ])
         .unwrap();
 
@@ -689,27 +714,25 @@ mod tests {
 
         let res = super::aggregate_responses(vec![
             process_response(
-                ConnectorResponse {
-                    result: response1.into(),
-                    key: response_key1,
-                    debug_request: None,
-                },
+                Ok(response1),
+                response_key1,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
             process_response(
-                ConnectorResponse {
-                    result: response2.into(),
-                    key: response_key2,
-                    debug_request: None,
-                },
+                Ok(response2),
+                response_key2,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
         ])
         .unwrap();
 
@@ -823,49 +846,45 @@ mod tests {
 
         let res = super::aggregate_responses(vec![
             process_response(
-                ConnectorResponse {
-                    result: response_plaintext.into(),
-                    key: response_key_plaintext,
-                    debug_request: None,
-                },
+                Ok(response_plaintext),
+                response_key_plaintext,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
             process_response(
-                ConnectorResponse {
-                    result: response1.into(),
-                    key: response_key1,
-                    debug_request: None,
-                },
+                Ok(response1),
+                response_key1,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
             process_response(
-                ConnectorResponse {
-                    result: response2.into(),
-                    key: response_key2,
-                    debug_request: None,
-                },
+                Ok(response2),
+                response_key2,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
             process_response(
-                ConnectorResponse {
-                    result: response3.into(),
-                    key: response_key3,
-                    debug_request: None,
-                },
+                Ok(response3),
+                response_key3,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
         ])
         .unwrap();
 
@@ -1053,16 +1072,15 @@ mod tests {
 
         let res = super::aggregate_responses(vec![
             process_response(
-                ConnectorResponse {
-                    result: response1.into(),
-                    key: response_key1,
-                    debug_request: None,
-                },
+                Ok(response1),
+                response_key1,
                 &connector,
                 &Context::default(),
+                None,
                 &None,
             )
-            .await,
+            .await
+            .mapped_response,
         ])
         .unwrap();
 

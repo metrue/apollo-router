@@ -260,11 +260,19 @@ impl field::Visit for FieldsVisitor<'_, '_> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::sync::MutexGuard;
 
+    use apollo_compiler::name;
+    use apollo_federation::sources::connect::ConnectId;
+    use apollo_federation::sources::connect::ConnectSpec;
+    use apollo_federation::sources::connect::Connector;
     use apollo_federation::sources::connect::HTTPMethod;
+    use apollo_federation::sources::connect::HttpJsonTransport;
+    use apollo_federation::sources::connect::JSONSelection;
+    use apollo_federation::sources::connect::URLTemplate;
     use http::header::CONTENT_LENGTH;
     use http::HeaderValue;
     use tests::events::RouterResponseBodyExtensionType;
@@ -276,6 +284,8 @@ mod tests {
 
     use super::*;
     use crate::graphql;
+    use crate::plugins::connectors::handle_responses::MappedResponse;
+    use crate::plugins::connectors::make_requests::ResponseKey;
     use crate::plugins::telemetry::config_new::events;
     use crate::plugins::telemetry::config_new::events::log_event;
     use crate::plugins::telemetry::config_new::events::EventLevel;
@@ -285,10 +295,11 @@ mod tests {
     use crate::plugins::telemetry::config_new::logging::TextFormat;
     use crate::plugins::telemetry::dynamic_attribute::SpanDynAttribute;
     use crate::plugins::telemetry::otel;
-    use crate::services::connector_service::ConnectorInfo;
-    use crate::services::connector_service::CONNECTOR_INFO_CONTEXT_KEY;
-    use crate::services::http::HttpRequest;
-    use crate::services::http::HttpResponse;
+    use crate::services::connector::request_service::transport;
+    use crate::services::connector::request_service::Request;
+    use crate::services::connector::request_service::Response;
+    use crate::services::connector::request_service::TransportRequest;
+    use crate::services::connector::request_service::TransportResponse;
     use crate::services::router;
     use crate::services::router::body;
     use crate::services::subgraph;
@@ -829,36 +840,78 @@ connector:
                     .expect("expecting valid response");
                 subgraph_events.on_response(&subgraph_resp);
 
-                let connector_info = ConnectorInfo {
-                    subgraph_name: "connector_subgraph".to_string(),
-                    source_name: Some("source".to_string()),
-                    http_method: HTTPMethod::Get.as_str().to_string(),
-                    url_template: "/test".to_string(),
-                };
                 let context = crate::Context::default();
-                context
-                    .insert(CONNECTOR_INFO_CONTEXT_KEY, connector_info)
-                    .unwrap();
                 let mut http_request = http::Request::builder().body(body::empty()).unwrap();
                 http_request
                     .headers_mut()
                     .insert("x-log-request", HeaderValue::from_static("log"));
-                let http_request = HttpRequest {
-                    http_request,
-                    context,
+                let transport_request = TransportRequest::Http(
+                    crate::services::connector::request_service::transport::http::HttpRequest {
+                        inner: http_request,
+                        debug: None,
+                    },
+                );
+                let connector = Connector {
+                    id: ConnectId::new(
+                        "connector_subgraph".into(),
+                        Some("source".into()),
+                        name!(Query),
+                        name!(users),
+                        0,
+                        "label",
+                    ),
+                    transport: HttpJsonTransport {
+                        source_url: None,
+                        connect_template: URLTemplate::from_str("/test").unwrap(),
+                        method: HTTPMethod::Get,
+                        headers: Default::default(),
+                        body: None,
+                    },
+                    selection: JSONSelection::empty(),
+                    config: None,
+                    max_requests: None,
+                    entity_resolver: None,
+                    spec: ConnectSpec::V0_1,
+                    request_variables: Default::default(),
+                    response_variables: Default::default(),
+                };
+                let response_key = ResponseKey::RootField {
+                    name: "hello".to_string(),
+                    inputs: Default::default(),
+                    selection: Arc::new(JSONSelection::parse("$.data").unwrap()),
+                };
+                let connector_request = Request {
+                    context: context.clone(),
+                    service_name: Arc::default(),
+                    connector: Arc::new(connector.clone()),
+                    transport_request,
+                    key: response_key.clone(),
+                    mapping_problems: vec![], // TODO: add some problems to test mapping problem selectors
                 };
                 let connector_events = event_config.new_connector_events();
-                connector_events.on_request(&http_request);
+                connector_events.on_request(&connector_request);
 
-                let http_response = HttpResponse {
-                    http_response: http::Response::builder()
-                        .status(200)
-                        .header("x-log-response", HeaderValue::from_static("log"))
-                        .body(body::empty())
-                        .expect("expecting valid response"),
-                    context: Default::default(),
+                let connector_response = Response {
+                    context,
+                    connector: connector.clone(),
+                    transport_result: Ok(TransportResponse::Http(transport::http::HttpResponse {
+                        inner: http::Response::builder()
+                            .status(200)
+                            .header("x-log-response", HeaderValue::from_static("log"))
+                            .body(body::empty())
+                            .expect("expecting valid response")
+                            .into_parts()
+                            .0,
+                    })),
+                    mapped_response: MappedResponse::Data {
+                        data: serde_json::json!({})
+                            .try_into()
+                            .expect("expecting valid JSON"),
+                        key: response_key,
+                        problems: vec![],
+                    },
                 };
-                connector_events.on_response(&http_response);
+                connector_events.on_response(&connector_response);
             },
         );
 
@@ -936,7 +989,6 @@ connector:
                     .header(CONTENT_LENGTH, "25")
                     .header("x-log-request", HeaderValue::from_static("log"))
                     .data(serde_json_bytes::json!({"data": "res"}))
-                    .context(ctx)
                     .build()
                     .expect("expecting valid response");
                 router_events.on_response(&router_resp);
@@ -1005,36 +1057,76 @@ connector:
                     .expect("expecting valid response");
                 subgraph_events.on_response(&subgraph_resp);
 
-                let connector_info = ConnectorInfo {
-                    subgraph_name: "connector_subgraph".to_string(),
-                    source_name: Some("source".to_string()),
-                    http_method: HTTPMethod::Get.as_str().to_string(),
-                    url_template: "/test".to_string(),
-                };
                 let context = crate::Context::default();
-                context
-                    .insert(CONNECTOR_INFO_CONTEXT_KEY, connector_info)
-                    .unwrap();
                 let mut http_request = http::Request::builder().body(body::empty()).unwrap();
                 http_request
                     .headers_mut()
                     .insert("x-log-request", HeaderValue::from_static("log"));
-                let http_request = HttpRequest {
-                    http_request,
-                    context,
+                let transport_request = TransportRequest::Http(transport::http::HttpRequest {
+                    inner: http_request,
+                    debug: None,
+                });
+                let connector = Connector {
+                    id: ConnectId::new(
+                        "connector_subgraph".into(),
+                        Some("source".into()),
+                        name!(Query),
+                        name!(users),
+                        0,
+                        "label",
+                    ),
+                    transport: HttpJsonTransport {
+                        source_url: None,
+                        connect_template: URLTemplate::from_str("/test").unwrap(),
+                        method: HTTPMethod::Get,
+                        headers: Default::default(),
+                        body: None,
+                    },
+                    selection: JSONSelection::empty(),
+                    config: None,
+                    max_requests: None,
+                    entity_resolver: None,
+                    spec: ConnectSpec::V0_1,
+                    request_variables: Default::default(),
+                    response_variables: Default::default(),
+                };
+                let response_key = ResponseKey::RootField {
+                    name: "hello".to_string(),
+                    inputs: Default::default(),
+                    selection: Arc::new(JSONSelection::parse("$.data").unwrap()),
+                };
+                let connector_request = Request {
+                    context: context.clone(),
+                    service_name: Arc::default(),
+                    connector: Arc::new(connector.clone()),
+                    transport_request,
+                    key: response_key.clone(),
+                    mapping_problems: vec![], // TODO: add some problems to test mapping problem selectors
                 };
                 let connector_events = event_config.new_connector_events();
-                connector_events.on_request(&http_request);
+                connector_events.on_request(&connector_request);
 
-                let http_response = HttpResponse {
-                    http_response: http::Response::builder()
-                        .status(200)
-                        .header("x-log-response", HeaderValue::from_static("log"))
-                        .body(body::empty())
-                        .expect("expecting valid response"),
-                    context: Default::default(),
+                let connector_response = Response {
+                    context,
+                    connector: connector.clone(),
+                    transport_result: Ok(TransportResponse::Http(transport::http::HttpResponse {
+                        inner: http::Response::builder()
+                            .status(200)
+                            .header("x-log-response", HeaderValue::from_static("log"))
+                            .body(body::empty())
+                            .expect("expecting valid response")
+                            .into_parts()
+                            .0,
+                    })),
+                    mapped_response: MappedResponse::Data {
+                        data: serde_json::json!({})
+                            .try_into()
+                            .expect("expecting valid JSON"),
+                        key: response_key,
+                        problems: vec![],
+                    },
                 };
-                connector_events.on_response(&http_response);
+                connector_events.on_response(&connector_response);
             },
         );
 

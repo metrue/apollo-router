@@ -22,6 +22,8 @@ use crate::json_ext::Path;
 use crate::json_ext::PathElement;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::services::connect;
+use crate::services::connector::request_service::transport::http::HttpRequest;
+use crate::services::connector::request_service::TransportRequest;
 use crate::Context;
 
 const REPRESENTATIONS_VAR: &str = "representations";
@@ -189,7 +191,7 @@ fn request_params_to_requests(
 ) -> Result<Vec<Request>, MakeRequestError> {
     let mut results = vec![];
     for response_key in request_params {
-        let (request, debug_request) = make_request(
+        let (request, debug_request, apply_to_errors) = make_request(
             &connector.transport,
             response_key.inputs().merge(
                 &connector.request_variables,
@@ -202,9 +204,12 @@ fn request_params_to_requests(
         )?;
 
         results.push(Request {
-            request,
+            request: TransportRequest::Http(HttpRequest {
+                inner: request,
+                debug: debug_request,
+            }),
             key: response_key,
-            debug_request,
+            apply_to_errors,
         });
     }
 
@@ -564,6 +569,7 @@ mod tests {
 
     use crate::graphql;
     use crate::query_planner::fetch::Variables;
+    use crate::services::connector::request_service::TransportRequest;
     use crate::Context;
 
     #[test]
@@ -2668,10 +2674,11 @@ mod tests {
             .unwrap()
             .into_iter()
             .map(|req| {
-                let (parts, _body) = req.request.into_parts();
+                let TransportRequest::Http(http_request) = req.request;
+                let (parts, _body) = http_request.inner.into_parts();
                 let new_req =
                     http::Request::from_parts(parts, http_body_util::Empty::<bytes::Bytes>::new());
-                (new_req, req.key, req.debug_request)
+                (new_req, req.key, http_request.debug)
             })
             .collect();
 

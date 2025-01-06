@@ -1,5 +1,4 @@
 pub(crate) mod configuration;
-pub(crate) mod error;
 mod form_encoding;
 pub(crate) mod handle_responses;
 pub(crate) mod http;

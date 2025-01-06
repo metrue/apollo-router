@@ -1,9 +1,12 @@
 use derivative::Derivative;
+use opentelemetry_api::Array;
+use opentelemetry_api::StringValue;
 use opentelemetry_api::Value;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower::BoxError;
 
+use crate::plugins::connectors::handle_responses::MappedResponse;
 use crate::plugins::telemetry::config::AttributeValue;
 use crate::plugins::telemetry::config_new::connector::ConnectorRequest;
 use crate::plugins::telemetry::config_new::connector::ConnectorResponse;
@@ -13,8 +16,9 @@ use crate::plugins::telemetry::config_new::selectors::ErrorRepr;
 use crate::plugins::telemetry::config_new::selectors::ResponseStatus;
 use crate::plugins::telemetry::config_new::Selector;
 use crate::plugins::telemetry::config_new::Stage;
-use crate::services::connector_service::ConnectorInfo;
-use crate::services::connector_service::CONNECTOR_INFO_CONTEXT_KEY;
+use crate::services::connector::request_service::TransportRequest;
+use crate::services::connector::request_service::TransportResponse;
+use crate::services::connector_service::Level;
 use crate::Context;
 
 #[derive(Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -39,6 +43,15 @@ impl From<&ConnectorValue> for InstrumentValue<ConnectorSelector> {
         }
     }
 }
+
+#[derive(Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub(crate) enum MappingProblems {
+    Problems,
+    MaxLevel,
+    Count,
+}
+
 #[derive(Deserialize, JsonSchema, Clone, Derivative)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", untagged)]
 #[derivative(Debug, PartialEq)]
@@ -91,6 +104,14 @@ pub(crate) enum ConnectorSelector {
         /// Critical error if it happens
         error: ErrorRepr,
     },
+    RequestMappingProblems {
+        /// Request mapping problems, if any
+        connector_request_mapping_problems: MappingProblems,
+    },
+    ResponseMappingProblems {
+        /// Response mapping problems, if any
+        connector_response_mapping_problems: MappingProblems,
+    },
 }
 
 impl Selector for ConnectorSelector {
@@ -99,134 +120,194 @@ impl Selector for ConnectorSelector {
     type EventResponse = ();
 
     fn on_request(&self, request: &Self::Request) -> Option<Value> {
-        let connector_info = request
-            .context
-            .get::<&str, ConnectorInfo>(CONNECTOR_INFO_CONTEXT_KEY);
         match self {
-            ConnectorSelector::SubgraphName { subgraph_name } if *subgraph_name => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.subgraph_name.clone())
-                .map(opentelemetry::Value::from),
-            ConnectorSelector::ConnectorSource { .. } => connector_info
-                .ok()
-                .flatten()
-                .and_then(|info| info.source_name.clone())
+            ConnectorSelector::SubgraphName { subgraph_name } if *subgraph_name => Some(
+                opentelemetry::Value::from(request.connector.id.subgraph_name.clone()),
+            ),
+            ConnectorSelector::ConnectorSource { .. } => request
+                .connector
+                .id
+                .source_name
+                .as_ref()
+                .cloned()
                 .map(opentelemetry::Value::from),
             ConnectorSelector::ConnectorHttpMethod {
                 connector_http_method,
-            } if *connector_http_method => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.http_method.clone())
-                .map(opentelemetry::Value::from),
+            } if *connector_http_method => Some(opentelemetry::Value::from(
+                request.connector.transport.method.as_str().to_string(),
+            )),
             ConnectorSelector::ConnectorUrlTemplate {
                 connector_url_template,
-            } if *connector_url_template => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.url_template.clone())
-                .map(opentelemetry::Value::from),
+            } if *connector_url_template => Some(opentelemetry::Value::from(
+                request.connector.transport.connect_template.to_string(),
+            )),
             ConnectorSelector::HttpRequestHeader {
                 connector_http_request_header: connector_request_header,
                 default,
                 ..
-            } => request
-                .http_request
-                .headers()
-                .get(connector_request_header)
-                .and_then(|h| Some(h.to_str().ok()?.to_string()))
-                .or_else(|| default.clone())
-                .map(opentelemetry::Value::from),
+            } => {
+                let TransportRequest::Http(ref http_request) = request.transport_request;
+                http_request
+                    .inner
+                    .headers()
+                    .get(connector_request_header)
+                    .and_then(|h| Some(h.to_str().ok()?.to_string()))
+                    .or_else(|| default.clone())
+                    .map(opentelemetry::Value::from)
+            }
+            ConnectorSelector::RequestMappingProblems {
+                connector_request_mapping_problems: mapping_problems,
+            } => {
+                match mapping_problems {
+                    MappingProblems::Problems => Some(Value::Array(Array::String(
+                        request
+                            .mapping_problems
+                            .iter()
+                            .filter_map(|problem| {
+                                serde_json::to_string(problem).ok().map(StringValue::from)
+                            })
+                            .collect(),
+                    ))),
+                    MappingProblems::MaxLevel => Some(Value::String(StringValue::from(
+                        request
+                            .mapping_problems
+                            .iter()
+                            .map(|_| {
+                                Level::Error // TODO use level from problem when available
+                            })
+                            .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
+                            .unwrap_or(Level::Info)
+                            .to_string(),
+                    ))),
+                    MappingProblems::Count => Some(Value::I64(
+                        request
+                            .mapping_problems
+                            .iter()
+                            .flat_map(|value| {
+                                if let serde_json_bytes::Value::Number(ref number) = value["count"]
+                                {
+                                    number.as_i64()
+                                } else {
+                                    None
+                                }
+                            })
+                            .sum(),
+                    )),
+                }
+            }
             ConnectorSelector::StaticField { r#static } => Some(r#static.clone().into()),
             _ => None,
         }
     }
 
     fn on_response(&self, response: &Self::Response) -> Option<Value> {
-        let connector_info = response
-            .context
-            .get::<&str, ConnectorInfo>(CONNECTOR_INFO_CONTEXT_KEY);
         match self {
-            ConnectorSelector::SubgraphName { subgraph_name } if *subgraph_name => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.subgraph_name.clone())
-                .map(opentelemetry::Value::from),
-            ConnectorSelector::ConnectorSource { .. } => connector_info
-                .ok()
-                .flatten()
-                .and_then(|info| info.source_name.clone())
+            ConnectorSelector::SubgraphName { subgraph_name } if *subgraph_name => Some(
+                opentelemetry::Value::from(response.connector.id.subgraph_name.clone()),
+            ),
+            ConnectorSelector::ConnectorSource { .. } => response
+                .connector
+                .id
+                .source_name
+                .as_ref()
+                .cloned()
                 .map(opentelemetry::Value::from),
             ConnectorSelector::ConnectorHttpMethod {
                 connector_http_method,
-            } if *connector_http_method => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.http_method.clone())
-                .map(opentelemetry::Value::from),
+            } if *connector_http_method => Some(opentelemetry::Value::from(
+                response.connector.transport.method.as_str().to_string(),
+            )),
             ConnectorSelector::ConnectorUrlTemplate {
                 connector_url_template,
-            } if *connector_url_template => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.url_template.clone())
-                .map(opentelemetry::Value::from),
+            } if *connector_url_template => Some(opentelemetry::Value::from(
+                response.connector.transport.connect_template.to_string(),
+            )),
             ConnectorSelector::ConnectorResponseHeader {
                 connector_http_response_header: connector_response_header,
                 default,
                 ..
-            } => response
-                .http_response
-                .headers()
-                .get(connector_response_header)
-                .and_then(|h| Some(h.to_str().ok()?.to_string()))
-                .or_else(|| default.clone())
-                .map(opentelemetry::Value::from),
+            } => {
+                if let Ok(TransportResponse::Http(ref http_response)) = response.transport_result {
+                    http_response
+                        .inner
+                        .headers
+                        .get(connector_response_header)
+                        .and_then(|h| Some(h.to_str().ok()?.to_string()))
+                        .or_else(|| default.clone())
+                        .map(opentelemetry::Value::from)
+                } else {
+                    None
+                }
+            }
             ConnectorSelector::ConnectorResponseStatus {
                 connector_http_response_status: response_status,
-            } => match response_status {
-                ResponseStatus::Code => {
-                    Some(Value::I64(response.http_response.status().as_u16() as i64))
+            } => {
+                if let Ok(TransportResponse::Http(ref http_response)) = response.transport_result {
+                    let status = http_response.inner.status;
+                    match response_status {
+                        ResponseStatus::Code => Some(Value::I64(status.as_u16() as i64)),
+                        ResponseStatus::Reason => {
+                            status.canonical_reason().map(|reason| reason.into())
+                        }
+                    }
+                } else {
+                    None
                 }
-                ResponseStatus::Reason => response
-                    .http_response
-                    .status()
-                    .canonical_reason()
-                    .map(|reason| reason.into()),
-            },
+            }
             ConnectorSelector::StaticField { r#static } => Some(r#static.clone().into()),
+            ConnectorSelector::ResponseMappingProblems {
+                connector_response_mapping_problems: mapping_problems,
+            } => {
+                if let MappedResponse::Data {
+                    data: _,
+                    key: _,
+                    ref problems,
+                } = response.mapped_response
+                {
+                    match mapping_problems {
+                        MappingProblems::Problems => Some(Value::Array(Array::String(
+                            problems
+                                .iter()
+                                .filter_map(|problem| {
+                                    serde_json::to_string(problem).ok().map(StringValue::from)
+                                })
+                                .collect(),
+                        ))),
+                        MappingProblems::MaxLevel => Some(Value::String(StringValue::from(
+                            problems
+                                .iter()
+                                .map(|_| {
+                                    Level::Error // TODO use level from problem when available
+                                })
+                                .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
+                                .unwrap_or(Level::Info)
+                                .to_string(),
+                        ))),
+                        MappingProblems::Count => Some(Value::I64(
+                            problems
+                                .iter()
+                                .flat_map(|value| {
+                                    if let serde_json_bytes::Value::Number(ref number) =
+                                        value["count"]
+                                    {
+                                        number.as_i64()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .sum(),
+                        )),
+                    }
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
 
-    fn on_error(&self, error: &BoxError, ctx: &Context) -> Option<Value> {
-        let connector_info = ctx.get::<&str, ConnectorInfo>(CONNECTOR_INFO_CONTEXT_KEY);
+    fn on_error(&self, error: &BoxError, _: &Context) -> Option<Value> {
         match self {
-            ConnectorSelector::SubgraphName { subgraph_name } if *subgraph_name => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.subgraph_name.clone())
-                .map(opentelemetry::Value::from),
-            ConnectorSelector::ConnectorSource { .. } => connector_info
-                .ok()
-                .flatten()
-                .and_then(|info| info.source_name.clone())
-                .map(opentelemetry::Value::from),
-            ConnectorSelector::ConnectorHttpMethod {
-                connector_http_method,
-            } if *connector_http_method => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.http_method.clone())
-                .map(opentelemetry::Value::from),
-            ConnectorSelector::ConnectorUrlTemplate {
-                connector_url_template,
-            } if *connector_url_template => connector_info
-                .ok()
-                .flatten()
-                .map(|info| info.url_template.clone())
-                .map(opentelemetry::Value::from),
             ConnectorSelector::Error { .. } => Some(error.to_string().into()),
             ConnectorSelector::StaticField { r#static } => Some(r#static.clone().into()),
             _ => None,
@@ -279,20 +360,36 @@ impl Selector for ConnectorSelector {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    use apollo_compiler::name;
+    use apollo_federation::sources::connect::ConnectId;
+    use apollo_federation::sources::connect::ConnectSpec;
+    use apollo_federation::sources::connect::Connector;
     use apollo_federation::sources::connect::HTTPMethod;
+    use apollo_federation::sources::connect::HttpJsonTransport;
+    use apollo_federation::sources::connect::JSONSelection;
+    use apollo_federation::sources::connect::URLTemplate;
+    use http::HeaderValue;
     use http::StatusCode;
+    use opentelemetry_api::Array;
+    use opentelemetry_api::Value;
 
     use super::ConnectorSelector;
     use super::ConnectorSource;
-    use crate::plugins::telemetry::config_new::connector::ConnectorRequest;
-    use crate::plugins::telemetry::config_new::connector::ConnectorResponse;
+    use super::MappingProblems;
+    use crate::plugins::connectors::handle_responses::MappedResponse;
+    use crate::plugins::connectors::make_requests::ResponseKey;
     use crate::plugins::telemetry::config_new::selectors::ResponseStatus;
     use crate::plugins::telemetry::config_new::Selector;
-    use crate::services::connector_service::ConnectorInfo;
-    use crate::services::connector_service::CONNECTOR_INFO_CONTEXT_KEY;
-    use crate::services::http::HttpRequest;
-    use crate::services::http::HttpResponse;
+    use crate::services::connector::request_service::transport;
+    use crate::services::connector::request_service::Request;
+    use crate::services::connector::request_service::Response;
+    use crate::services::connector::request_service::TransportRequest;
+    use crate::services::connector::request_service::TransportResponse;
     use crate::services::router::body;
+    use crate::services::router::body::RouterBody;
     use crate::Context;
 
     const TEST_SUBGRAPH_NAME: &str = "test_subgraph_name";
@@ -302,58 +399,114 @@ mod tests {
     const TEST_HEADER_VALUE: &str = "test_header_value";
     const TEST_STATIC: &str = "test_static";
 
-    fn connector_info() -> ConnectorInfo {
-        ConnectorInfo {
-            subgraph_name: TEST_SUBGRAPH_NAME.to_string(),
-            source_name: Some(TEST_SOURCE_NAME.to_string()),
-            http_method: HTTPMethod::Get.as_str().to_string(),
-            url_template: TEST_URL_TEMPLATE.to_string(),
+    fn context() -> Context {
+        Context::default()
+    }
+
+    fn connector() -> Connector {
+        Connector {
+            id: ConnectId::new(
+                TEST_SUBGRAPH_NAME.into(),
+                Some(TEST_SOURCE_NAME.into()),
+                name!(Query),
+                name!(users),
+                0,
+                "label",
+            ),
+            transport: HttpJsonTransport {
+                source_url: None,
+                connect_template: URLTemplate::from_str(TEST_URL_TEMPLATE).unwrap(),
+                method: HTTPMethod::Get,
+                headers: Default::default(),
+                body: None,
+            },
+            selection: JSONSelection::empty(),
+            config: None,
+            max_requests: None,
+            entity_resolver: None,
+            spec: ConnectSpec::V0_1,
+            request_variables: Default::default(),
+            response_variables: Default::default(),
         }
     }
 
-    fn context(connector_info: ConnectorInfo) -> Context {
-        let context = Context::default();
-        context
-            .insert(CONNECTOR_INFO_CONTEXT_KEY, connector_info)
-            .unwrap();
-        context
-    }
-
-    fn http_request(context: Context) -> ConnectorRequest {
-        HttpRequest {
-            http_request: http::Request::builder().body(body::empty()).unwrap(),
-            context,
+    fn response_key() -> ResponseKey {
+        ResponseKey::RootField {
+            name: "hello".to_string(),
+            inputs: Default::default(),
+            selection: Arc::new(JSONSelection::parse("$.data").unwrap()),
         }
     }
 
-    fn http_request_with_header(context: Context) -> ConnectorRequest {
-        HttpRequest {
-            http_request: http::Request::builder()
-                .header(TEST_HEADER_NAME, TEST_HEADER_VALUE)
-                .body(body::empty())
-                .unwrap(),
-            context,
+    fn http_request() -> http::Request<RouterBody> {
+        http::Request::builder().body(body::empty()).unwrap()
+    }
+
+    fn http_request_with_header() -> http::Request<RouterBody> {
+        let mut http_request = http::Request::builder().body(body::empty()).unwrap();
+        http_request.headers_mut().insert(
+            TEST_HEADER_NAME,
+            HeaderValue::from_static(TEST_HEADER_VALUE),
+        );
+        http_request
+    }
+
+    fn connector_request(http_request: http::Request<RouterBody>) -> Request {
+        Request {
+            context: context(),
+            service_name: Arc::default(),
+            connector: Arc::new(connector()),
+            transport_request: TransportRequest::Http(transport::http::HttpRequest {
+                inner: http_request,
+                debug: None,
+            }),
+            key: response_key(),
+            mapping_problems: vec![], // TODO: add some problems to test mapping problem selectors
         }
     }
 
-    fn http_response(context: Context, status_code: StatusCode) -> ConnectorResponse {
-        HttpResponse {
-            http_response: http::Response::builder()
-                .status(status_code)
-                .body(body::empty())
-                .unwrap(),
-            context,
+    fn connector_response(status_code: StatusCode) -> Response {
+        Response {
+            context: context(),
+            connector: connector(),
+            transport_result: Ok(TransportResponse::Http(transport::http::HttpResponse {
+                inner: http::Response::builder()
+                    .status(status_code)
+                    .body(body::empty())
+                    .expect("expecting valid response")
+                    .into_parts()
+                    .0,
+            })),
+            mapped_response: MappedResponse::Data {
+                data: serde_json::json!({})
+                    .try_into()
+                    .expect("expecting valid JSON"),
+                key: response_key(),
+                problems: vec![], // TODO: add some problems to test mapping problem selectors
+            },
         }
     }
 
-    fn http_response_with_header(context: Context, status_code: StatusCode) -> ConnectorResponse {
-        HttpResponse {
-            http_response: http::Response::builder()
-                .status(status_code)
-                .header(TEST_HEADER_NAME, TEST_HEADER_VALUE)
-                .body(body::empty())
-                .unwrap(),
-            context,
+    fn connector_response_with_header() -> Response {
+        Response {
+            context: context(),
+            connector: connector(),
+            transport_result: Ok(TransportResponse::Http(transport::http::HttpResponse {
+                inner: http::Response::builder()
+                    .status(200)
+                    .header(TEST_HEADER_NAME, TEST_HEADER_VALUE)
+                    .body(body::empty())
+                    .expect("expecting valid response")
+                    .into_parts()
+                    .0,
+            })),
+            mapped_response: MappedResponse::Data {
+                data: serde_json::json!({})
+                    .try_into()
+                    .expect("expecting valid JSON"),
+                key: response_key(),
+                problems: vec![],
+            },
         }
     }
 
@@ -364,7 +517,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_STATIC.into()),
-            selector.on_request(&http_request(context(connector_info())))
+            selector.on_request(&connector_request(http_request()))
         );
     }
 
@@ -375,7 +528,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_SUBGRAPH_NAME.into()),
-            selector.on_request(&http_request(context(connector_info())))
+            selector.on_request(&connector_request(http_request()))
         );
     }
 
@@ -386,7 +539,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_SOURCE_NAME.into()),
-            selector.on_request(&http_request(context(connector_info())))
+            selector.on_request(&connector_request(http_request()))
         );
     }
 
@@ -397,7 +550,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_URL_TEMPLATE.into()),
-            selector.on_request(&http_request(context(connector_info())))
+            selector.on_request(&connector_request(http_request()))
         );
     }
 
@@ -410,7 +563,7 @@ mod tests {
         };
         assert_eq!(
             Some("defaulted".into()),
-            selector.on_request(&http_request(context(connector_info())))
+            selector.on_request(&connector_request(http_request()))
         );
     }
 
@@ -423,7 +576,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_HEADER_VALUE.into()),
-            selector.on_request(&http_request_with_header(context(connector_info())))
+            selector.on_request(&connector_request(http_request_with_header()))
         );
     }
 
@@ -434,7 +587,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_STATIC.into()),
-            selector.on_response(&http_response(context(connector_info()), StatusCode::OK))
+            selector.on_response(&connector_response(StatusCode::OK))
         );
     }
 
@@ -445,7 +598,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_SUBGRAPH_NAME.into()),
-            selector.on_response(&http_response(context(connector_info()), StatusCode::OK))
+            selector.on_response(&connector_response(StatusCode::OK))
         );
     }
 
@@ -456,7 +609,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_SOURCE_NAME.into()),
-            selector.on_response(&http_response(context(connector_info()), StatusCode::OK))
+            selector.on_response(&connector_response(StatusCode::OK))
         );
     }
 
@@ -467,7 +620,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_URL_TEMPLATE.into()),
-            selector.on_response(&http_response(context(connector_info()), StatusCode::OK))
+            selector.on_response(&connector_response(StatusCode::OK))
         );
     }
 
@@ -480,7 +633,7 @@ mod tests {
         };
         assert_eq!(
             Some("defaulted".into()),
-            selector.on_response(&http_response(context(connector_info()), StatusCode::OK))
+            selector.on_response(&connector_response(StatusCode::OK))
         );
     }
 
@@ -493,10 +646,7 @@ mod tests {
         };
         assert_eq!(
             Some(TEST_HEADER_VALUE.into()),
-            selector.on_response(&http_response_with_header(
-                context(connector_info()),
-                StatusCode::OK
-            ))
+            selector.on_response(&connector_response_with_header())
         );
     }
 
@@ -507,7 +657,7 @@ mod tests {
         };
         assert_eq!(
             Some(200.into()),
-            selector.on_response(&http_response(context(connector_info()), StatusCode::OK))
+            selector.on_response(&connector_response(StatusCode::OK))
         );
     }
 
@@ -518,7 +668,7 @@ mod tests {
         };
         assert_eq!(
             Some("OK".into()),
-            selector.on_response(&http_response(context(connector_info()), StatusCode::OK))
+            selector.on_response(&connector_response(StatusCode::OK))
         );
     }
 
@@ -529,10 +679,7 @@ mod tests {
         };
         assert_eq!(
             Some("Not Found".into()),
-            selector.on_response(&http_response(
-                context(connector_info()),
-                StatusCode::NOT_FOUND
-            ))
+            selector.on_response(&connector_response(StatusCode::NOT_FOUND))
         );
     }
 
@@ -543,7 +690,73 @@ mod tests {
         };
         assert_eq!(
             Some(HTTPMethod::Get.as_str().into()),
-            selector.on_response(&http_response(context(connector_info()), StatusCode::OK))
+            selector.on_response(&connector_response(StatusCode::OK))
+        );
+    }
+
+    #[test]
+    fn connector_on_request_mapping_problems() {
+        let selector = ConnectorSelector::RequestMappingProblems {
+            connector_request_mapping_problems: MappingProblems::Problems,
+        };
+        assert_eq!(
+            Some(Value::Array(Array::String(vec![]))),
+            selector.on_request(&connector_request(http_request()))
+        );
+    }
+
+    #[test]
+    fn connector_on_request_mapping_problems_count() {
+        let selector = ConnectorSelector::RequestMappingProblems {
+            connector_request_mapping_problems: MappingProblems::Count,
+        };
+        assert_eq!(
+            Some(0.into()),
+            selector.on_request(&connector_request(http_request()))
+        );
+    }
+
+    #[test]
+    fn connector_on_request_mapping_problems_max_level() {
+        let selector = ConnectorSelector::RequestMappingProblems {
+            connector_request_mapping_problems: MappingProblems::MaxLevel,
+        };
+        assert_eq!(
+            Some("info".into()), // TODO: not really right, there are no problems - need a "none" level?
+            selector.on_request(&connector_request(http_request()))
+        );
+    }
+
+    #[test]
+    fn connector_on_response_mapping_problems() {
+        let selector = ConnectorSelector::ResponseMappingProblems {
+            connector_response_mapping_problems: MappingProblems::Problems,
+        };
+        assert_eq!(
+            Some(Value::Array(Array::String(vec![]))),
+            selector.on_response(&connector_response(StatusCode::OK))
+        );
+    }
+
+    #[test]
+    fn connector_on_response_mapping_problems_count() {
+        let selector = ConnectorSelector::ResponseMappingProblems {
+            connector_response_mapping_problems: MappingProblems::Count,
+        };
+        assert_eq!(
+            Some(0.into()),
+            selector.on_response(&connector_response(StatusCode::OK))
+        );
+    }
+
+    #[test]
+    fn connector_on_response_mapping_problems_max_level() {
+        let selector = ConnectorSelector::ResponseMappingProblems {
+            connector_response_mapping_problems: MappingProblems::MaxLevel,
+        };
+        assert_eq!(
+            Some("info".into()), // TODO: not really right, there are no problems - need a "none" level?
+            selector.on_response(&connector_response(StatusCode::OK))
         );
     }
 

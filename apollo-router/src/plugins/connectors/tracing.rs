@@ -59,6 +59,7 @@ mod tests {
 
     use crate::metrics::FutureMetricsExt as _;
     use crate::plugins::connectors::tracing::connect_spec_counts;
+    use crate::services::connector::request_service::ConnectorRequestServiceFactory;
     use crate::services::connector_service::ConnectorServiceFactory;
     use crate::spec::Schema;
 
@@ -117,9 +118,12 @@ mod tests {
             let _factory = ConnectorServiceFactory::new(
                 schema.into(),
                 Arc::default(),
-                Arc::default(),
                 Default::default(),
                 Arc::default(),
+                Arc::new(ConnectorRequestServiceFactory::new(
+                    Default::default(),
+                    Default::default(),
+                )),
             );
 
             assert_gauge!(

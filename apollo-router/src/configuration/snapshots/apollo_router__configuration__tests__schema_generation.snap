@@ -2075,6 +2075,32 @@ expression: "&schema"
             "error"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "connector_request_mapping_problems": {
+              "$ref": "#/definitions/MappingProblems",
+              "description": "#/definitions/MappingProblems"
+            }
+          },
+          "required": [
+            "connector_request_mapping_problems"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "connector_response_mapping_problems": {
+              "$ref": "#/definitions/MappingProblems",
+              "description": "#/definitions/MappingProblems"
+            }
+          },
+          "required": [
+            "connector_response_mapping_problems"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -4052,6 +4078,14 @@ expression: "&schema"
         }
       },
       "type": "object"
+    },
+    "MappingProblems": {
+      "enum": [
+        "problems",
+        "max_level",
+        "count"
+      ],
+      "type": "string"
     },
     "MetricAggregation": {
       "oneOf": [

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use apollo_compiler::collections::IndexMap;
+use apollo_federation::sources::connect::ApplyToError;
 use apollo_federation::sources::connect::HTTPMethod;
 use apollo_federation::sources::connect::HeaderSource;
 use apollo_federation::sources::connect::HttpJsonTransport;
@@ -28,13 +29,20 @@ use crate::services::connect;
 use crate::services::router;
 use crate::services::router::body::RouterBody;
 
+#[allow(clippy::type_complexity)] // TODO
 pub(crate) fn make_request(
     transport: &HttpJsonTransport,
     inputs: IndexMap<String, Value>,
     original_request: &connect::Request,
     debug: &Option<Arc<Mutex<ConnectorContext>>>,
-) -> Result<(http::Request<RouterBody>, Option<ConnectorDebugHttpRequest>), HttpJsonTransportError>
-{
+) -> Result<
+    (
+        http::Request<RouterBody>,
+        Option<ConnectorDebugHttpRequest>,
+        Vec<ApplyToError>,
+    ),
+    HttpJsonTransportError,
+> {
     let flat_inputs = flatten_keys(&inputs);
     let uri = make_uri(
         transport.source_url.as_ref(),
@@ -104,7 +112,7 @@ pub(crate) fn make_request(
                     source: body.to_string(),
                     transformed: body.to_string(), // no transformation so this is the same
                     result: json_body,
-                    errors: apply_to_errors,
+                    errors: apply_to_errors.clone(),
                 }),
             )
         } else {
@@ -116,13 +124,13 @@ pub(crate) fn make_request(
                     source: body.to_string(),
                     transformed: body.to_string(), // no transformation so this is the same
                     result: json_body.clone(),
-                    errors: apply_to_errors,
+                    errors: apply_to_errors.clone(),
                 }),
             )
         }
     });
 
-    Ok((request, debug_request))
+    Ok((request, debug_request, apply_to_errors))
 }
 
 fn make_uri(
@@ -763,6 +771,7 @@ mod tests {
                 body: UnsyncBoxBody,
             },
             None,
+            [],
         )
         "###);
 
@@ -815,6 +824,7 @@ mod tests {
                 body: UnsyncBoxBody,
             },
             None,
+            [],
         )
         "###);
 

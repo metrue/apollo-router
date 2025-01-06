@@ -25,6 +25,8 @@ use crate::plugins::telemetry::config_new::events::EventLevel;
 use crate::plugins::telemetry::config_new::events::StandardEventConfig;
 use crate::plugins::telemetry::config_new::extendable::Extendable;
 use crate::plugins::telemetry::config_new::instruments::Instrumented;
+use crate::services::connector::request_service::TransportRequest;
+use crate::services::connector::request_service::TransportResponse;
 use crate::Context;
 
 #[derive(Clone, Deserialize, JsonSchema, Debug, Default)]
@@ -93,10 +95,11 @@ impl Instrumented
                 }
             }
             let mut attrs = Vec::with_capacity(5);
+            let TransportRequest::Http(ref http_request) = request.transport_request;
             #[cfg(test)]
             let headers = {
-                let mut headers: indexmap::IndexMap<String, http::HeaderValue> = request
-                    .http_request
+                let mut headers: indexmap::IndexMap<String, http::HeaderValue> = http_request
+                    .inner
                     .headers()
                     .clone()
                     .into_iter()
@@ -106,25 +109,24 @@ impl Instrumented
                 headers
             };
             #[cfg(not(test))]
-            let headers = request.http_request.headers();
+            let headers = http_request.inner.headers();
 
             attrs.push(KeyValue::new(
                 HTTP_REQUEST_HEADERS,
                 opentelemetry::Value::String(format!("{:?}", headers).into()),
             ));
+
             attrs.push(KeyValue::new(
                 HTTP_REQUEST_METHOD,
-                opentelemetry::Value::String(format!("{}", request.http_request.method()).into()),
+                opentelemetry::Value::String(format!("{}", http_request.inner.method()).into()),
             ));
             attrs.push(KeyValue::new(
                 HTTP_REQUEST_URI,
-                opentelemetry::Value::String(format!("{}", request.http_request.uri()).into()),
+                opentelemetry::Value::String(format!("{}", http_request.inner.uri()).into()),
             ));
             attrs.push(KeyValue::new(
                 HTTP_REQUEST_VERSION,
-                opentelemetry::Value::String(
-                    format!("{:?}", request.http_request.version()).into(),
-                ),
+                opentelemetry::Value::String(format!("{:?}", http_request.inner.version()).into()),
             ));
             // FIXME: need to re-introduce this the same way we did for router request body but we need a request id in order to
             // match the request to the element in context.extensions to make sure to not mismatch the request body settings to another one
@@ -147,41 +149,37 @@ impl Instrumented
                 }
             }
             let mut attrs = Vec::with_capacity(4);
-            #[cfg(test)]
-            let headers = {
-                let mut headers: indexmap::IndexMap<String, http::HeaderValue> = response
-                    .http_response
-                    .headers()
-                    .clone()
-                    .into_iter()
-                    .filter_map(|(name, val)| Some((name?.to_string(), val)))
-                    .collect();
-                headers.sort_keys();
-                headers
-            };
-            #[cfg(not(test))]
-            let headers = response.http_response.headers();
+            if let Ok(TransportResponse::Http(ref http_response)) = response.transport_result {
+                #[cfg(test)]
+                let headers = {
+                    let mut headers: indexmap::IndexMap<String, http::HeaderValue> = http_response
+                        .inner
+                        .headers
+                        .clone()
+                        .into_iter()
+                        .filter_map(|(name, val)| Some((name?.to_string(), val)))
+                        .collect();
+                    headers.sort_keys();
+                    headers
+                };
+                #[cfg(not(test))]
+                let headers = &http_response.inner.headers;
 
-            attrs.push(KeyValue::new(
-                HTTP_RESPONSE_HEADERS,
-                opentelemetry::Value::String(format!("{:?}", headers).into()),
-            ));
-            attrs.push(KeyValue::new(
-                HTTP_RESPONSE_STATUS,
-                opentelemetry::Value::String(format!("{}", response.http_response.status()).into()),
-            ));
-            attrs.push(KeyValue::new(
-                HTTP_RESPONSE_VERSION,
-                opentelemetry::Value::String(
-                    format!("{:?}", response.http_response.version()).into(),
-                ),
-            ));
-            // FIXME: need to re-introduce this the same way we did for router response body but we need a request id in order to
-            // match the request to the element in context.extensions to make sure to not mismatch the response body settings to another one
-            // attrs.push(KeyValue::new(
-            //     HTTP_RESPONSE_BODY,
-            //     opentelemetry::Value::String(format!("{:?}", response.http_response.body()).into()),
-            // ));
+                attrs.push(KeyValue::new(
+                    HTTP_RESPONSE_HEADERS,
+                    opentelemetry::Value::String(format!("{:?}", headers).into()),
+                ));
+                attrs.push(KeyValue::new(
+                    HTTP_RESPONSE_STATUS,
+                    opentelemetry::Value::String(format!("{}", http_response.inner.status).into()),
+                ));
+                attrs.push(KeyValue::new(
+                    HTTP_RESPONSE_VERSION,
+                    opentelemetry::Value::String(
+                        format!("{:?}", http_response.inner.version).into(),
+                    ),
+                ));
+            }
             log_event(self.response.level(), "connector.response", attrs, "");
         }
         for custom_event in &self.custom {

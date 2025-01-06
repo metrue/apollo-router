@@ -195,7 +195,7 @@ fn serialize_response(
     }
 }
 
-fn aggregate_apply_to_errors(errors: &[ApplyToError]) -> Vec<serde_json_bytes::Value> {
+pub(crate) fn aggregate_apply_to_errors(errors: &[ApplyToError]) -> Vec<serde_json_bytes::Value> {
     errors
         .iter()
         .fold(
