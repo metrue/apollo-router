@@ -227,8 +227,9 @@ impl tower::Service<Request> for ConnectorRequestService {
                     TransportRequest::Http(http_request) => {
                         debug_request = http_request.debug;
                         if let Ok(Some(service_name)) = service_name {
-                            if let Some(http_client_service_factory) =
-                                http_client_service_factory.get(&service_name.to_string()).cloned()
+                            if let Some(http_client_service_factory) = http_client_service_factory
+                                .get(&service_name.to_string())
+                                .cloned()
                             {
                                 match http_client_service_factory
                                     .create(&original_subgraph_name)
