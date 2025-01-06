@@ -454,7 +454,6 @@ mod tests {
     fn connector_request(http_request: http::Request<RouterBody>) -> Request {
         Request {
             context: context(),
-            service_name: Arc::default(),
             connector: Arc::new(connector()),
             transport_request: TransportRequest::Http(transport::http::HttpRequest {
                 inner: http_request,

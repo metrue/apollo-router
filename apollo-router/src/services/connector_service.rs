@@ -51,6 +51,8 @@ pub(crate) const APOLLO_CONNECTOR_SOURCE_NAME: Key =
     Key::from_static_str("apollo.connector.source.name");
 pub(crate) const APOLLO_CONNECTOR_SOURCE_DETAIL: Key =
     Key::from_static_str("apollo.connector.source.detail");
+pub(super) const CONNECTOR_SERVICE_NAME_CONTEXT_KEY: &str =
+    "apollo_router::connector::service_name";
 
 /// A service for executing connector requests.
 #[derive(Clone)]
@@ -206,7 +208,7 @@ async fn execute(
         .extensions()
         .with_lock(|lock| lock.get::<Arc<Mutex<ConnectorContext>>>().cloned());
 
-    // TODO: this creates a ConnectRequest, which is then immediately transformed into a request service request transport request - simplify?
+    // TODO: this creates a ConnectRequest, which is then immediately transformed into a transport request - simplify?
     //  just have make_requests create a vec of connector_request_service request?
     let requests = make_requests(request, connector, debug).map_err(BoxError::from)?;
     let connector = Arc::new(connector.clone());
@@ -221,6 +223,11 @@ async fn execute(
             let context = context.clone();
             let connector = connector.clone();
             let service_name = service_name.clone();
+            // TODO: remove this once we have a source aware query planner. Putting this in the
+            //  context avoids having to expose the internal subgraph name on the Request type.
+            context
+                .insert(CONNECTOR_SERVICE_NAME_CONTEXT_KEY, service_name)
+                .unwrap();
             async move {
                 let span = tracing::info_span!(
                     CONNECT_REQUEST_SPAN_NAME,
@@ -229,7 +236,6 @@ async fn execute(
                 );
                 let connect_request = connector::request_service::Request {
                     context,
-                    service_name,
                     connector,
                     transport_request,
                     key,

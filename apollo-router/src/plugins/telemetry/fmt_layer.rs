@@ -882,7 +882,6 @@ connector:
                 };
                 let connector_request = Request {
                     context: context.clone(),
-                    service_name: Arc::default(),
                     connector: Arc::new(connector.clone()),
                     transport_request,
                     key: response_key.clone(),
@@ -1097,7 +1096,6 @@ connector:
                 };
                 let connector_request = Request {
                     context: context.clone(),
-                    service_name: Arc::default(),
                     connector: Arc::new(connector.clone()),
                     transport_request,
                     key: response_key.clone(),

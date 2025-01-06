@@ -26,6 +26,7 @@ use crate::plugins::connectors::request_limit::RequestLimits;
 use crate::plugins::connectors::tracing::CONNECTOR_TYPE_HTTP;
 use crate::services::connector::request_service::transport::http::HttpRequest;
 use crate::services::connector::request_service::transport::http::HttpResponse;
+use crate::services::connector_service::CONNECTOR_SERVICE_NAME_CONTEXT_KEY;
 use crate::services::http::HttpClientServiceFactory;
 use crate::services::new_service::ServiceFactory;
 use crate::services::Plugins;
@@ -44,9 +45,6 @@ assert_impl_all!(Response: Send);
 pub(crate) struct Request {
     /// The request context
     pub(crate) context: Context,
-
-    /// The service name for this connector
-    pub(crate) service_name: Arc<str>,
 
     /// The connector associated with this request
     // TODO: if this service moves into the public API, consider whether this exposes too much
@@ -201,7 +199,9 @@ impl tower::Service<Request> for ConnectorRequestService {
 
     fn call(&mut self, request: Request) -> Self::Future {
         let original_subgraph_name = request.connector.id.subgraph_name.to_string();
-        let service_name = request.service_name.to_string();
+        let service_name = request
+            .context
+            .get::<&str, Arc<str>>(CONNECTOR_SERVICE_NAME_CONTEXT_KEY);
         let http_client_service_factory = self.http_client_service_factory.clone();
         let (debug, request_limit) = request.context.extensions().with_lock(|lock| {
             let debug = lock.get::<Arc<Mutex<ConnectorContext>>>().cloned();
@@ -226,24 +226,28 @@ impl tower::Service<Request> for ConnectorRequestService {
                 let result = match request.transport_request {
                     TransportRequest::Http(http_request) => {
                         debug_request = http_request.debug;
-                        if let Some(http_client_service_factory) =
-                            http_client_service_factory.get(&service_name).cloned()
-                        {
-                            match http_client_service_factory
-                                .create(&original_subgraph_name)
-                                .oneshot(crate::services::http::HttpRequest {
-                                    http_request: http_request.inner,
-                                    context: request.context.clone(),
-                                })
-                                .await
+                        if let Ok(Some(service_name)) = service_name {
+                            if let Some(http_client_service_factory) =
+                                http_client_service_factory.get(&service_name.to_string()).cloned()
                             {
-                                Ok(res) => Ok(res.http_response),
-                                Err(e) => Err(Error::TransportFailure(
-                                    handle_subrequest_http_error(e, &request.connector),
-                                )),
+                                match http_client_service_factory
+                                    .create(&original_subgraph_name)
+                                    .oneshot(crate::services::http::HttpRequest {
+                                        http_request: http_request.inner,
+                                        context: request.context.clone(),
+                                    })
+                                    .await
+                                {
+                                    Ok(res) => Ok(res.http_response),
+                                    Err(e) => Err(Error::TransportFailure(
+                                        handle_subrequest_http_error(e, &request.connector),
+                                    )),
+                                }
+                            } else {
+                                Err(Error::TransportFailure("no http client found".into()))
                             }
                         } else {
-                            Err(Error::TransportFailure("no http client found".into()))
+                            Err(Error::TransportFailure("no service name found".into()))
                         }
                     }
                 };
