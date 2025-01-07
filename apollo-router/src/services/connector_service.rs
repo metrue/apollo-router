@@ -22,16 +22,13 @@ use tracing_futures::Instrument;
 use super::connect::BoxService;
 use super::new_service::ServiceFactory;
 use crate::plugins::connectors::handle_responses::aggregate_responses;
-use crate::plugins::connectors::http::Request;
 use crate::plugins::connectors::make_requests::make_requests;
-use crate::plugins::connectors::plugin::debug::aggregate_apply_to_errors;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::plugins::connectors::tracing::connect_spec_version_instrument;
 use crate::plugins::connectors::tracing::CONNECTOR_TYPE_HTTP;
 use crate::plugins::subscription::SubscriptionConfig;
 use crate::plugins::telemetry::consts::CONNECT_REQUEST_SPAN_NAME;
 use crate::plugins::telemetry::consts::CONNECT_SPAN_NAME;
-use crate::services::connector;
 use crate::services::connector::request_service::ConnectorRequestServiceFactory;
 use crate::services::ConnectRequest;
 use crate::services::ConnectResponse;
@@ -187,7 +184,7 @@ impl tower::Service<ConnectRequest> for ConnectorService {
             execute(
                 &connector_request_service_factory,
                 request,
-                &connector,
+                connector,
                 &service_name,
             )
             .instrument(span)
@@ -199,56 +196,38 @@ impl tower::Service<ConnectRequest> for ConnectorService {
 async fn execute(
     connector_request_service_factory: &ConnectorRequestServiceFactory,
     request: ConnectRequest,
-    connector: &Connector,
+    connector: Connector,
     service_name: &str,
 ) -> Result<ConnectResponse, BoxError> {
     let context = request.context.clone();
-
+    let connector = Arc::new(connector);
+    let service_name = Arc::<str>::from(service_name.to_string());
     let debug = &context
         .extensions()
         .with_lock(|lock| lock.get::<Arc<Mutex<ConnectorContext>>>().cloned());
 
-    // TODO: this creates a ConnectRequest, which is then immediately transformed into a transport request - simplify?
-    //  just have make_requests create a vec of connector_request_service request?
-    let requests = make_requests(request, connector, debug).map_err(BoxError::from)?;
-    let connector = Arc::new(connector.clone());
-    let service_name = Arc::<str>::from(service_name.to_string());
-
-    let tasks = requests.into_iter().map(
-        move |Request {
-                  request: transport_request,
-                  key,
-                  apply_to_errors,
-              }| {
-            let context = context.clone();
-            let connector = connector.clone();
-            let service_name = service_name.clone();
+    let tasks = make_requests(request, &context, connector, debug)
+        .map_err(BoxError::from)?
+        .into_iter()
+        .map(move |request| {
             // TODO: remove this once we have a source aware query planner. Putting this in the
             //  context avoids having to expose the internal subgraph name on the Request type.
-            context
-                .insert(CONNECTOR_SERVICE_NAME_CONTEXT_KEY, service_name)
+            request
+                .context
+                .insert(CONNECTOR_SERVICE_NAME_CONTEXT_KEY, service_name.clone())
                 .unwrap();
             async move {
-                let span = tracing::info_span!(
-                    CONNECT_REQUEST_SPAN_NAME,
-                    "otel.kind" = "INTERNAL",
-                    "otel.status_code" = tracing::field::Empty,
-                );
-                let connect_request = connector::request_service::Request {
-                    context,
-                    connector,
-                    transport_request,
-                    key,
-                    mapping_problems: aggregate_apply_to_errors(&apply_to_errors),
-                };
                 connector_request_service_factory
                     .create()
-                    .oneshot(connect_request)
-                    .instrument(span)
+                    .oneshot(request)
+                    .instrument(tracing::info_span!(
+                        CONNECT_REQUEST_SPAN_NAME,
+                        "otel.kind" = "INTERNAL",
+                        "otel.status_code" = tracing::field::Empty,
+                    ))
                     .await
             }
-        },
-    );
+        });
 
     aggregate_responses(
         futures::future::try_join_all(tasks)

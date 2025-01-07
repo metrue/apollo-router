@@ -15,14 +15,15 @@ use serde_json_bytes::ByteString;
 use serde_json_bytes::Map;
 use serde_json_bytes::Value;
 
-use super::http::Request;
 use super::http_json_transport::make_request;
 use super::http_json_transport::HttpJsonTransportError;
 use crate::json_ext::Path;
 use crate::json_ext::PathElement;
+use crate::plugins::connectors::plugin::debug::aggregate_apply_to_errors;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::services::connect;
 use crate::services::connector::request_service::transport::http::HttpRequest;
+use crate::services::connector::request_service::Request;
 use crate::services::connector::request_service::TransportRequest;
 use crate::Context;
 
@@ -171,26 +172,31 @@ impl From<&ResponseKey> for Path {
 
 pub(crate) fn make_requests(
     request: connect::Request,
-    connector: &Connector,
+    context: &Context,
+    connector: Arc<Connector>,
     debug: &Option<Arc<Mutex<ConnectorContext>>>,
 ) -> Result<Vec<Request>, MakeRequestError> {
     let request_params = match connector.entity_resolver {
-        Some(EntityResolver::Explicit) => entities_from_request(connector, &request),
-        Some(EntityResolver::Implicit) => entities_with_fields_from_request(connector, &request),
-        None => root_fields(connector, &request),
+        Some(EntityResolver::Explicit) => entities_from_request(connector.clone(), &request),
+        Some(EntityResolver::Implicit) => {
+            entities_with_fields_from_request(connector.clone(), &request)
+        }
+        None => root_fields(connector.clone(), &request),
     }?;
 
-    request_params_to_requests(connector, request_params, &request, debug)
+    request_params_to_requests(context, connector, request_params, &request, debug)
 }
 
 fn request_params_to_requests(
-    connector: &Connector,
+    context: &Context,
+    connector: Arc<Connector>,
     request_params: Vec<ResponseKey>,
     original_request: &connect::Request,
     debug: &Option<Arc<Mutex<ConnectorContext>>>,
 ) -> Result<Vec<Request>, MakeRequestError> {
     let mut results = vec![];
     for response_key in request_params {
+        let connector = connector.clone();
         let (request, debug_request, apply_to_errors) = make_request(
             &connector.transport,
             response_key.inputs().merge(
@@ -204,12 +210,14 @@ fn request_params_to_requests(
         )?;
 
         results.push(Request {
-            request: TransportRequest::Http(HttpRequest {
+            context: context.clone(),
+            connector,
+            transport_request: TransportRequest::Http(HttpRequest {
                 inner: request,
                 debug: debug_request,
             }),
             key: response_key,
-            apply_to_errors,
+            mapping_problems: aggregate_apply_to_errors(&apply_to_errors),
         });
     }
 
@@ -258,7 +266,7 @@ pub(crate) enum MakeRequestError {
 /// }
 /// ```
 fn root_fields(
-    connector: &Connector,
+    connector: Arc<Connector>,
     request: &connect::Request,
 ) -> Result<Vec<ResponseKey>, MakeRequestError> {
     use MakeRequestError::*;
@@ -334,7 +342,7 @@ fn root_fields(
 ///
 /// Returns a list of request inputs and the response key (index in the array).
 fn entities_from_request(
-    connector: &Connector,
+    connector: Arc<Connector>,
     request: &connect::Request,
 ) -> Result<Vec<ResponseKey>, MakeRequestError> {
     use MakeRequestError::*;
@@ -403,7 +411,7 @@ fn entities_from_request(
 /// Return a list of request inputs with the response key (index in list and
 /// name/alias of field) for each.
 fn entities_with_fields_from_request(
-    connector: &Connector,
+    connector: Arc<Connector>,
     request: &connect::Request,
 ) -> Result<Vec<ResponseKey>, MakeRequestError> {
     use MakeRequestError::*;
@@ -626,7 +634,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::root_fields(&connector, &req), @r###"
+        assert_debug_snapshot!(super::root_fields(Arc::new(connector), &req), @r###"
         Ok(
             [
                 RootField {
@@ -757,7 +765,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::root_fields(&connector, &req), @r###"
+        assert_debug_snapshot!(super::root_fields(Arc::new(connector), &req), @r###"
         Ok(
             [
                 RootField {
@@ -916,7 +924,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::root_fields(&connector, &req), @r###"
+        assert_debug_snapshot!(super::root_fields(Arc::new(connector), &req), @r###"
         Ok(
             [
                 RootField {
@@ -1145,7 +1153,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::entities_from_request(&connector, &req).unwrap(), @r###"
+        assert_debug_snapshot!(super::entities_from_request(Arc::new(connector), &req).unwrap(), @r###"
         [
             Entity {
                 index: 0,
@@ -1461,7 +1469,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::entities_from_request(&connector, &req).unwrap(), @r###"
+        assert_debug_snapshot!(super::entities_from_request(Arc::new(connector), &req).unwrap(), @r###"
         [
             Entity {
                 index: 0,
@@ -1758,7 +1766,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::entities_from_request(&connector, &req).unwrap(), @r###"
+        assert_debug_snapshot!(super::entities_from_request(Arc::new(connector), &req).unwrap(), @r###"
         [
             RootField {
                 name: "a",
@@ -1977,7 +1985,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::entities_with_fields_from_request(&connector, &req).unwrap(), @r###"
+        assert_debug_snapshot!(super::entities_with_fields_from_request(Arc::new(connector), &req).unwrap(), @r###"
         [
             EntityField {
                 index: 0,
@@ -2255,7 +2263,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::entities_with_fields_from_request(&connector, &req).unwrap(), @r###"
+        assert_debug_snapshot!(super::entities_with_fields_from_request(Arc::new(connector), &req).unwrap(), @r###"
         [
             EntityField {
                 index: 0,
@@ -2530,7 +2538,7 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        assert_debug_snapshot!(super::entities_with_fields_from_request(&connector ,&req).unwrap(), @r###"
+        assert_debug_snapshot!(super::entities_with_fields_from_request(Arc::new(connector), &req).unwrap(), @r###"
         [
             EntityField {
                 index: 0,
@@ -2670,17 +2678,20 @@ mod tests {
             response_variables: Default::default(),
         };
 
-        let requests: Vec<_> = super::make_requests(req, &connector, &None)
-            .unwrap()
-            .into_iter()
-            .map(|req| {
-                let TransportRequest::Http(http_request) = req.request;
-                let (parts, _body) = http_request.inner.into_parts();
-                let new_req =
-                    http::Request::from_parts(parts, http_body_util::Empty::<bytes::Bytes>::new());
-                (new_req, req.key, http_request.debug)
-            })
-            .collect();
+        let requests: Vec<_> =
+            super::make_requests(req, &Context::default(), Arc::new(connector), &None)
+                .unwrap()
+                .into_iter()
+                .map(|req| {
+                    let TransportRequest::Http(http_request) = req.transport_request;
+                    let (parts, _body) = http_request.inner.into_parts();
+                    let new_req = http::Request::from_parts(
+                        parts,
+                        http_body_util::Empty::<bytes::Bytes>::new(),
+                    );
+                    (new_req, req.key, http_request.debug)
+                })
+                .collect();
 
         assert_debug_snapshot!(requests, @r###"
         [
