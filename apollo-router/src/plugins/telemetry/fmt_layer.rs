@@ -401,6 +401,12 @@ connector:
         connector_http_method: true
       url_template:
         connector_url_template: true
+      mapping_problems:
+        connector_request_mapping_problems: problems
+      mapping_problems_count:
+        connector_request_mapping_problems: count
+      mapping_problems_max_level:
+        connector_request_mapping_problems: max_level
   my.connector.response.event:
     message: "my response event message"
     level: error
@@ -414,7 +420,13 @@ connector:
       url_template:
         connector_url_template: true
       response_status:
-        connector_http_response_status: code"#;
+        connector_http_response_status: code
+      mapping_problems:
+        connector_response_mapping_problems: problems
+      mapping_problems_count:
+        connector_response_mapping_problems: count
+      mapping_problems_max_level:
+        connector_response_mapping_problems: max_level"#;
 
     #[derive(Default, Clone)]
     struct LogBuffer(Arc<Mutex<Vec<u8>>>);
@@ -885,7 +897,23 @@ connector:
                     connector: Arc::new(connector.clone()),
                     transport_request,
                     key: response_key.clone(),
-                    mapping_problems: vec![], // TODO: add some problems to test mapping problem selectors
+                    mapping_problems: vec![
+                        serde_json_bytes::json!({
+                            "count": 1,
+                            "level": "error",
+                            "message": "error message",
+                        }),
+                        serde_json_bytes::json!({
+                            "count": 2,
+                            "level": "warn",
+                            "message": "warn message",
+                        }),
+                        serde_json_bytes::json!({
+                            "count": 3,
+                            "level": "info",
+                            "message": "info message",
+                        }),
+                    ],
                 };
                 let connector_events = event_config.new_connector_events();
                 connector_events.on_request(&connector_request);
@@ -907,7 +935,23 @@ connector:
                             .try_into()
                             .expect("expecting valid JSON"),
                         key: response_key,
-                        problems: vec![],
+                        problems: vec![
+                            serde_json_bytes::json!({
+                                "count": 1,
+                                "level": "error",
+                                "message": "error message",
+                            }),
+                            serde_json_bytes::json!({
+                                "count": 2,
+                                "level": "warn",
+                                "message": "warn message",
+                            }),
+                            serde_json_bytes::json!({
+                                "count": 3,
+                                "level": "info",
+                                "message": "info message",
+                            }),
+                        ],
                     },
                 };
                 connector_events.on_response(&connector_response);
@@ -1099,7 +1143,23 @@ connector:
                     connector: Arc::new(connector.clone()),
                     transport_request,
                     key: response_key.clone(),
-                    mapping_problems: vec![], // TODO: add some problems to test mapping problem selectors
+                    mapping_problems: vec![
+                        serde_json_bytes::json!({
+                            "count": 1,
+                            "level": "error",
+                            "message": "error message",
+                        }),
+                        serde_json_bytes::json!({
+                            "count": 2,
+                            "level": "warn",
+                            "message": "warn message",
+                        }),
+                        serde_json_bytes::json!({
+                            "count": 3,
+                            "level": "info",
+                            "message": "info message",
+                        }),
+                    ],
                 };
                 let connector_events = event_config.new_connector_events();
                 connector_events.on_request(&connector_request);
@@ -1121,7 +1181,23 @@ connector:
                             .try_into()
                             .expect("expecting valid JSON"),
                         key: response_key,
-                        problems: vec![],
+                        problems: vec![
+                            serde_json_bytes::json!({
+                                "count": 1,
+                                "level": "error",
+                                "message": "error message",
+                            }),
+                            serde_json_bytes::json!({
+                                "count": 2,
+                                "level": "warn",
+                                "message": "warn message",
+                            }),
+                            serde_json_bytes::json!({
+                                "count": 3,
+                                "level": "info",
+                                "message": "info message",
+                            }),
+                        ],
                     },
                 };
                 connector_events.on_response(&connector_response);

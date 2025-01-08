@@ -66,6 +66,7 @@ pub(crate) enum Level {
     Error = 0,
     Warn = 1,
     Info = 2,
+    None = 3,
 }
 
 impl Display for Level {
@@ -74,6 +75,7 @@ impl Display for Level {
             Level::Error => "error".to_string(),
             Level::Warn => "warn".to_string(),
             Level::Info => "info".to_string(),
+            Level::None => "none".to_string(),
         };
         write!(f, "{}", str)
     }

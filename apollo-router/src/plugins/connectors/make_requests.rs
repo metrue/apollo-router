@@ -22,9 +22,7 @@ use crate::json_ext::PathElement;
 use crate::plugins::connectors::plugin::debug::aggregate_apply_to_errors;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::services::connect;
-use crate::services::connector::request_service::transport::http::HttpRequest;
 use crate::services::connector::request_service::Request;
-use crate::services::connector::request_service::TransportRequest;
 use crate::Context;
 
 const REPRESENTATIONS_VAR: &str = "representations";
@@ -197,7 +195,7 @@ fn request_params_to_requests(
     let mut results = vec![];
     for response_key in request_params {
         let connector = connector.clone();
-        let (request, debug_request, apply_to_errors) = make_request(
+        let (transport_request, apply_to_errors) = make_request(
             &connector.transport,
             response_key.inputs().merge(
                 &connector.request_variables,
@@ -212,10 +210,7 @@ fn request_params_to_requests(
         results.push(Request {
             context: context.clone(),
             connector,
-            transport_request: TransportRequest::Http(HttpRequest {
-                inner: request,
-                debug: debug_request,
-            }),
+            transport_request,
             key: response_key,
             mapping_problems: aggregate_apply_to_errors(&apply_to_errors),
         });

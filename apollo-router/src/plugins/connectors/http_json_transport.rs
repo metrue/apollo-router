@@ -23,26 +23,18 @@ use url::Url;
 use super::form_encoding::encode_json_as_form;
 use crate::plugins::connectors::plugin::debug::serialize_request;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
-use crate::plugins::connectors::plugin::debug::ConnectorDebugHttpRequest;
 use crate::plugins::connectors::plugin::debug::SelectionData;
 use crate::services::connect;
+use crate::services::connector::request_service::transport::http::HttpRequest;
+use crate::services::connector::request_service::TransportRequest;
 use crate::services::router;
-use crate::services::router::body::RouterBody;
 
-#[allow(clippy::type_complexity)] // TODO
 pub(crate) fn make_request(
     transport: &HttpJsonTransport,
     inputs: IndexMap<String, Value>,
     original_request: &connect::Request,
     debug: &Option<Arc<Mutex<ConnectorContext>>>,
-) -> Result<
-    (
-        http::Request<RouterBody>,
-        Option<ConnectorDebugHttpRequest>,
-        Vec<ApplyToError>,
-    ),
-    HttpJsonTransportError,
-> {
+) -> Result<(TransportRequest, Vec<ApplyToError>), HttpJsonTransportError> {
     let flat_inputs = flatten_keys(&inputs);
     let uri = make_uri(
         transport.source_url.as_ref(),
@@ -130,7 +122,13 @@ pub(crate) fn make_request(
         }
     });
 
-    Ok((request, debug_request, apply_to_errors))
+    Ok((
+        TransportRequest::Http(HttpRequest {
+            inner: request,
+            debug: debug_request,
+        }),
+        apply_to_errors,
+    ))
 }
 
 fn make_uri(
@@ -760,22 +758,27 @@ mod tests {
 
         assert_debug_snapshot!(req, @r###"
         (
-            Request {
-                method: POST,
-                uri: http://localhost:8080/,
-                version: HTTP/1.1,
-                headers: {
-                    "content-type": "application/json",
-                    "content-length": "8",
+            Http(
+                HttpRequest {
+                    inner: Request {
+                        method: POST,
+                        uri: http://localhost:8080/,
+                        version: HTTP/1.1,
+                        headers: {
+                            "content-type": "application/json",
+                            "content-length": "8",
+                        },
+                        body: UnsyncBoxBody,
+                    },
+                    debug: None,
                 },
-                body: UnsyncBoxBody,
-            },
-            None,
+            ),
             [],
         )
         "###);
 
-        let body = body::into_string(req.0.into_body()).await.unwrap();
+        let TransportRequest::Http(HttpRequest { inner: req, .. }) = req.0;
+        let body = body::into_string(req.into_body()).await.unwrap();
         insta::assert_snapshot!(body, @r#"{"a":42}"#);
     }
 
@@ -813,22 +816,27 @@ mod tests {
 
         assert_debug_snapshot!(req, @r###"
         (
-            Request {
-                method: POST,
-                uri: http://localhost:8080/,
-                version: HTTP/1.1,
-                headers: {
-                    "content-type": "application/x-www-form-urlencoded",
-                    "content-length": "4",
+            Http(
+                HttpRequest {
+                    inner: Request {
+                        method: POST,
+                        uri: http://localhost:8080/,
+                        version: HTTP/1.1,
+                        headers: {
+                            "content-type": "application/x-www-form-urlencoded",
+                            "content-length": "4",
+                        },
+                        body: UnsyncBoxBody,
+                    },
+                    debug: None,
                 },
-                body: UnsyncBoxBody,
-            },
-            None,
+            ),
             [],
         )
         "###);
 
-        let body = body::into_string(req.0.into_body()).await.unwrap();
+        let TransportRequest::Http(HttpRequest { inner: req, .. }) = req.0;
+        let body = body::into_string(req.into_body()).await.unwrap();
         insta::assert_snapshot!(body, @r#"a=42"#);
     }
 

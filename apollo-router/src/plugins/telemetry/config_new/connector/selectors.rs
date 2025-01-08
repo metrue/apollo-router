@@ -176,7 +176,7 @@ impl Selector for ConnectorSelector {
                                 Level::Error // TODO use level from problem when available
                             })
                             .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
-                            .unwrap_or(Level::Info)
+                            .unwrap_or(Level::None)
                             .to_string(),
                     ))),
                     MappingProblems::Count => Some(Value::I64(
@@ -280,7 +280,7 @@ impl Selector for ConnectorSelector {
                                     Level::Error // TODO use level from problem when available
                                 })
                                 .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
-                                .unwrap_or(Level::Info)
+                                .unwrap_or(Level::None)
                                 .to_string(),
                         ))),
                         MappingProblems::Count => Some(Value::I64(
@@ -374,6 +374,7 @@ mod tests {
     use http::HeaderValue;
     use http::StatusCode;
     use opentelemetry_api::Array;
+    use opentelemetry_api::StringValue;
     use opentelemetry_api::Value;
 
     use super::ConnectorSelector;
@@ -388,6 +389,7 @@ mod tests {
     use crate::services::connector::request_service::Response;
     use crate::services::connector::request_service::TransportRequest;
     use crate::services::connector::request_service::TransportResponse;
+    use crate::services::connector_service::Level;
     use crate::services::router::body;
     use crate::services::router::body::RouterBody;
     use crate::Context;
@@ -452,6 +454,13 @@ mod tests {
     }
 
     fn connector_request(http_request: http::Request<RouterBody>) -> Request {
+        connector_request_with_mapping_problems(http_request, vec![])
+    }
+
+    fn connector_request_with_mapping_problems(
+        http_request: http::Request<RouterBody>,
+        mapping_problems: Vec<serde_json_bytes::value::Value>,
+    ) -> Request {
         Request {
             context: context(),
             connector: Arc::new(connector()),
@@ -460,11 +469,18 @@ mod tests {
                 debug: None,
             }),
             key: response_key(),
-            mapping_problems: vec![], // TODO: add some problems to test mapping problem selectors
+            mapping_problems,
         }
     }
 
     fn connector_response(status_code: StatusCode) -> Response {
+        connector_response_with_mapping_problems(status_code, vec![])
+    }
+
+    fn connector_response_with_mapping_problems(
+        status_code: StatusCode,
+        mapping_problems: Vec<serde_json_bytes::value::Value>,
+    ) -> Response {
         Response {
             context: context(),
             connector: connector(),
@@ -481,7 +497,7 @@ mod tests {
                     .try_into()
                     .expect("expecting valid JSON"),
                 key: response_key(),
-                problems: vec![], // TODO: add some problems to test mapping problem selectors
+                problems: mapping_problems,
             },
         }
     }
@@ -507,6 +523,40 @@ mod tests {
                 problems: vec![],
             },
         }
+    }
+
+    fn mapping_problems() -> Vec<serde_json_bytes::value::Value> {
+        vec![
+            serde_json_bytes::json!({
+                "count": 1,
+                "level": "error",
+                "message": "error message",
+            }),
+            serde_json_bytes::json!({
+                "count": 2,
+                "level": "warn",
+                "message": "warn message",
+            }),
+            serde_json_bytes::json!({
+                "count": 3,
+                "level": "info",
+                "message": "info message",
+            }),
+        ]
+    }
+
+    fn mapping_problem_array() -> Value {
+        Value::Array(Array::String(vec![
+            StringValue::from(String::from(
+                "{\"count\":1,\"level\":\"error\",\"message\":\"error message\"}",
+            )),
+            StringValue::from(String::from(
+                "{\"count\":2,\"level\":\"warn\",\"message\":\"warn message\"}",
+            )),
+            StringValue::from(String::from(
+                "{\"count\":3,\"level\":\"info\",\"message\":\"info message\"}",
+            )),
+        ]))
     }
 
     #[test]
@@ -694,7 +744,7 @@ mod tests {
     }
 
     #[test]
-    fn connector_on_request_mapping_problems() {
+    fn connector_on_request_mapping_problems_none() {
         let selector = ConnectorSelector::RequestMappingProblems {
             connector_request_mapping_problems: MappingProblems::Problems,
         };
@@ -705,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn connector_on_request_mapping_problems_count() {
+    fn connector_on_request_mapping_problems_count_zero() {
         let selector = ConnectorSelector::RequestMappingProblems {
             connector_request_mapping_problems: MappingProblems::Count,
         };
@@ -716,18 +766,60 @@ mod tests {
     }
 
     #[test]
-    fn connector_on_request_mapping_problems_max_level() {
+    fn connector_on_request_mapping_problems_max_level_none() {
         let selector = ConnectorSelector::RequestMappingProblems {
             connector_request_mapping_problems: MappingProblems::MaxLevel,
         };
         assert_eq!(
-            Some("info".into()), // TODO: not really right, there are no problems - need a "none" level?
+            Some(Level::None.to_string().into()),
             selector.on_request(&connector_request(http_request()))
         );
     }
 
     #[test]
-    fn connector_on_response_mapping_problems() {
+    fn connector_on_request_mapping_problems() {
+        let selector = ConnectorSelector::RequestMappingProblems {
+            connector_request_mapping_problems: MappingProblems::Problems,
+        };
+        assert_eq!(
+            Some(mapping_problem_array()),
+            selector.on_request(&connector_request_with_mapping_problems(
+                http_request(),
+                mapping_problems()
+            ))
+        );
+    }
+
+    #[test]
+    fn connector_on_request_mapping_problems_count() {
+        let selector = ConnectorSelector::RequestMappingProblems {
+            connector_request_mapping_problems: MappingProblems::Count,
+        };
+        assert_eq!(
+            Some(6.into()),
+            selector.on_request(&connector_request_with_mapping_problems(
+                http_request(),
+                mapping_problems()
+            ))
+        );
+    }
+
+    #[test]
+    fn connector_on_request_mapping_problems_max_level_error() {
+        let selector = ConnectorSelector::RequestMappingProblems {
+            connector_request_mapping_problems: MappingProblems::MaxLevel,
+        };
+        assert_eq!(
+            Some(Level::Error.to_string().into()),
+            selector.on_request(&connector_request_with_mapping_problems(
+                http_request(),
+                mapping_problems()
+            ))
+        );
+    }
+
+    #[test]
+    fn connector_on_response_mapping_problems_none() {
         let selector = ConnectorSelector::ResponseMappingProblems {
             connector_response_mapping_problems: MappingProblems::Problems,
         };
@@ -738,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn connector_on_response_mapping_problems_count() {
+    fn connector_on_response_mapping_problems_count_zero() {
         let selector = ConnectorSelector::ResponseMappingProblems {
             connector_response_mapping_problems: MappingProblems::Count,
         };
@@ -749,13 +841,55 @@ mod tests {
     }
 
     #[test]
-    fn connector_on_response_mapping_problems_max_level() {
+    fn connector_on_response_mapping_problems_max_level_none() {
         let selector = ConnectorSelector::ResponseMappingProblems {
             connector_response_mapping_problems: MappingProblems::MaxLevel,
         };
         assert_eq!(
-            Some("info".into()), // TODO: not really right, there are no problems - need a "none" level?
+            Some(Level::None.to_string().into()),
             selector.on_response(&connector_response(StatusCode::OK))
+        );
+    }
+
+    #[test]
+    fn connector_on_response_mapping_problems() {
+        let selector = ConnectorSelector::ResponseMappingProblems {
+            connector_response_mapping_problems: MappingProblems::Problems,
+        };
+        assert_eq!(
+            Some(mapping_problem_array()),
+            selector.on_response(&connector_response_with_mapping_problems(
+                StatusCode::OK,
+                mapping_problems()
+            ))
+        );
+    }
+
+    #[test]
+    fn connector_on_response_mapping_problems_count() {
+        let selector = ConnectorSelector::ResponseMappingProblems {
+            connector_response_mapping_problems: MappingProblems::Count,
+        };
+        assert_eq!(
+            Some(6.into()),
+            selector.on_response(&connector_response_with_mapping_problems(
+                StatusCode::OK,
+                mapping_problems()
+            ))
+        );
+    }
+
+    #[test]
+    fn connector_on_response_mapping_problems_max_level_error() {
+        let selector = ConnectorSelector::ResponseMappingProblems {
+            connector_response_mapping_problems: MappingProblems::MaxLevel,
+        };
+        assert_eq!(
+            Some(Level::Error.to_string().into()),
+            selector.on_response(&connector_response_with_mapping_problems(
+                StatusCode::OK,
+                mapping_problems()
+            ))
         );
     }
 
