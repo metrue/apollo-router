@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-
 use apollo_federation::sources::connect::ApplyToError;
 use bytes::Bytes;
-use itertools::Itertools;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json_bytes::json;
 
+use crate::plugins::connectors::mapping::aggregate_apply_to_errors;
+use crate::plugins::connectors::mapping::Problem;
 use crate::services::router::body::RouterBody;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -123,7 +122,7 @@ struct ConnectorDebugSelection {
     source: String,
     transformed: String,
     result: Option<serde_json_bytes::Value>,
-    errors: Vec<serde_json_bytes::Value>,
+    errors: Vec<Problem>,
 }
 
 pub(crate) fn serialize_request(
@@ -193,36 +192,4 @@ fn serialize_response(
             }),
         },
     }
-}
-
-pub(crate) fn aggregate_apply_to_errors(errors: &[ApplyToError]) -> Vec<serde_json_bytes::Value> {
-    errors
-        .iter()
-        .fold(
-            HashMap::default(),
-            |mut acc: HashMap<(&str, String), usize>, err| {
-                let path = err
-                    .path()
-                    .iter()
-                    .map(|p| match p.as_u64() {
-                        Some(_) => "@", // ignore array indices for grouping
-                        None => p.as_str().unwrap_or_default(),
-                    })
-                    .join(".");
-
-                acc.entry((err.message(), path))
-                    .and_modify(|c| *c += 1)
-                    .or_insert(1);
-                acc
-            },
-        )
-        .iter()
-        .map(|(key, count)| {
-            json!({
-                "message": key.0,
-                "path": key.1,
-                "count": count,
-            })
-        })
-        .collect()
 }

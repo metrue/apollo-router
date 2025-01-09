@@ -286,6 +286,8 @@ mod tests {
     use crate::graphql;
     use crate::plugins::connectors::handle_responses::MappedResponse;
     use crate::plugins::connectors::make_requests::ResponseKey;
+    use crate::plugins::connectors::mapping::Level;
+    use crate::plugins::connectors::mapping::Problem;
     use crate::plugins::telemetry::config_new::events;
     use crate::plugins::telemetry::config_new::events::log_event;
     use crate::plugins::telemetry::config_new::events::EventLevel;
@@ -898,21 +900,24 @@ connector:
                     transport_request,
                     key: response_key.clone(),
                     mapping_problems: vec![
-                        serde_json_bytes::json!({
-                            "count": 1,
-                            "level": "error",
-                            "message": "error message",
-                        }),
-                        serde_json_bytes::json!({
-                            "count": 2,
-                            "level": "warn",
-                            "message": "warn message",
-                        }),
-                        serde_json_bytes::json!({
-                            "count": 3,
-                            "level": "info",
-                            "message": "info message",
-                        }),
+                        Problem {
+                            count: 1,
+                            level: Level::Error,
+                            message: "error message".to_string(),
+                            path: "@.id".to_string(),
+                        },
+                        Problem {
+                            count: 2,
+                            level: Level::Warn,
+                            message: "warn message".to_string(),
+                            path: "@.id".to_string(),
+                        },
+                        Problem {
+                            count: 3,
+                            level: Level::Info,
+                            message: "info message".to_string(),
+                            path: "@.id".to_string(),
+                        },
                     ],
                 };
                 let connector_events = event_config.new_connector_events();
@@ -936,21 +941,24 @@ connector:
                             .expect("expecting valid JSON"),
                         key: response_key,
                         problems: vec![
-                            serde_json_bytes::json!({
-                                "count": 1,
-                                "level": "error",
-                                "message": "error message",
-                            }),
-                            serde_json_bytes::json!({
-                                "count": 2,
-                                "level": "warn",
-                                "message": "warn message",
-                            }),
-                            serde_json_bytes::json!({
-                                "count": 3,
-                                "level": "info",
-                                "message": "info message",
-                            }),
+                            Problem {
+                                count: 1,
+                                level: Level::Error,
+                                message: "error message".to_string(),
+                                path: "@.id".to_string(),
+                            },
+                            Problem {
+                                count: 2,
+                                level: Level::Warn,
+                                message: "warn message".to_string(),
+                                path: "@.id".to_string(),
+                            },
+                            Problem {
+                                count: 3,
+                                level: Level::Info,
+                                message: "info message".to_string(),
+                                path: "@.id".to_string(),
+                            },
                         ],
                     },
                 };
@@ -1144,21 +1152,24 @@ connector:
                     transport_request,
                     key: response_key.clone(),
                     mapping_problems: vec![
-                        serde_json_bytes::json!({
-                            "count": 1,
-                            "level": "error",
-                            "message": "error message",
-                        }),
-                        serde_json_bytes::json!({
-                            "count": 2,
-                            "level": "warn",
-                            "message": "warn message",
-                        }),
-                        serde_json_bytes::json!({
-                            "count": 3,
-                            "level": "info",
-                            "message": "info message",
-                        }),
+                        Problem {
+                            count: 1,
+                            level: Level::Error,
+                            message: "error message".to_string(),
+                            path: "@.id".to_string(),
+                        },
+                        Problem {
+                            count: 2,
+                            level: Level::Warn,
+                            message: "warn message".to_string(),
+                            path: "@.id".to_string(),
+                        },
+                        Problem {
+                            count: 3,
+                            level: Level::Info,
+                            message: "info message".to_string(),
+                            path: "@.id".to_string(),
+                        },
                     ],
                 };
                 let connector_events = event_config.new_connector_events();
@@ -1182,21 +1193,24 @@ connector:
                             .expect("expecting valid JSON"),
                         key: response_key,
                         problems: vec![
-                            serde_json_bytes::json!({
-                                "count": 1,
-                                "level": "error",
-                                "message": "error message",
-                            }),
-                            serde_json_bytes::json!({
-                                "count": 2,
-                                "level": "warn",
-                                "message": "warn message",
-                            }),
-                            serde_json_bytes::json!({
-                                "count": 3,
-                                "level": "info",
-                                "message": "info message",
-                            }),
+                            Problem {
+                                count: 1,
+                                level: Level::Error,
+                                message: "error message".to_string(),
+                                path: "@.id".to_string(),
+                            },
+                            Problem {
+                                count: 2,
+                                level: Level::Warn,
+                                message: "warn message".to_string(),
+                                path: "@.id".to_string(),
+                            },
+                            Problem {
+                                count: 3,
+                                level: Level::Info,
+                                message: "info message".to_string(),
+                                path: "@.id".to_string(),
+                            },
                         ],
                     },
                 };

@@ -2657,6 +2657,7 @@ mod tests {
     use crate::metrics::FutureMetricsExt;
     use crate::plugins::connectors::handle_responses::MappedResponse;
     use crate::plugins::connectors::make_requests::ResponseKey;
+    use crate::plugins::connectors::mapping::Problem;
     use crate::plugins::telemetry::config_new::cache::CacheInstruments;
     use crate::plugins::telemetry::config_new::graphql::GraphQLInstruments;
     use crate::plugins::telemetry::config_new::instruments::Instrumented;
@@ -2789,8 +2790,7 @@ mod tests {
             headers: HashMap<String, String>,
             body: Option<String>,
             #[serde(default)]
-            #[schemars(with = "Vec<serde_json::Value>")]
-            mapping_problems: Vec<Value>,
+            mapping_problems: Vec<Problem>,
         },
         ConnectorResponse {
             subgraph_name: String,
@@ -2802,8 +2802,7 @@ mod tests {
             headers: HashMap<String, String>,
             body: String,
             #[serde(default)]
-            #[schemars(with = "Vec<serde_json::Value>")]
-            mapping_problems: Vec<Value>,
+            mapping_problems: Vec<Problem>,
         },
     }
 

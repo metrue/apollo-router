@@ -19,7 +19,7 @@ use super::http_json_transport::make_request;
 use super::http_json_transport::HttpJsonTransportError;
 use crate::json_ext::Path;
 use crate::json_ext::PathElement;
-use crate::plugins::connectors::plugin::debug::aggregate_apply_to_errors;
+use crate::plugins::connectors::mapping::aggregate_apply_to_errors;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::services::connect;
 use crate::services::connector::request_service::Request;

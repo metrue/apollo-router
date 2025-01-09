@@ -7,12 +7,14 @@ events:
         url_template: "/users"
         uri: "/users"
         mapping_problems:
-          - level: warn
+          - level: Warn
             count: 3
             message: "request warn message"
-          - level: info
+            path: "@.id"
+          - level: Info
             count: 7
             message: "request info message"
+            path: "@.id"
     - connector_response:
         subgraph_name: users
         source_name: user_api
@@ -22,9 +24,10 @@ events:
         body: |
           { "username": "foo" }
         mapping_problems:
-          - level: info
+          - level: Info
             count: 3
             message: "response info message"
+            path: "@.id"
     - connector_request:
         subgraph_name: users
         source_name: user_api
@@ -32,9 +35,10 @@ events:
         url_template: "/users"
         uri: "/users"
         mapping_problems:
-          - level: info
+          - level: Info
             count: 5
             message: "request info message"
+            path: "@.id"
     - connector_response:
         subgraph_name: users
         source_name: user_api
@@ -44,9 +48,11 @@ events:
         body: |
           { "username": "foo" }
         mapping_problems:
-          - level: warn
+          - level: Warn
             count: 1
             message: "response warn message"
-          - level: error
+            path: "@.id"
+          - level: Error
             count: 1
             message: "response error message"
+            path: "@.id"

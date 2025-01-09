@@ -7,7 +7,6 @@ use apollo_federation::sources::connect::Connector;
 use futures::future::BoxFuture;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
-use serde_json_bytes::Value;
 use static_assertions::assert_impl_all;
 use tower::BoxError;
 use tower::ServiceBuilder;
@@ -20,6 +19,7 @@ use crate::json_ext::Path;
 use crate::plugins::connectors::handle_responses::process_response;
 use crate::plugins::connectors::handle_responses::MappedResponse;
 use crate::plugins::connectors::make_requests::ResponseKey;
+use crate::plugins::connectors::mapping::Problem;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::plugins::connectors::plugin::debug::ConnectorDebugHttpRequest;
 use crate::plugins::connectors::request_limit::RequestLimits;
@@ -59,7 +59,7 @@ pub(crate) struct Request {
     pub(crate) key: ResponseKey,
 
     /// Mapping problems encountered when creating the transport request
-    pub(crate) mapping_problems: Vec<Value>,
+    pub(crate) mapping_problems: Vec<Problem>,
 }
 
 /// Response type for a connector

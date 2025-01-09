@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use derivative::Derivative;
 use opentelemetry_api::Array;
 use opentelemetry_api::StringValue;
@@ -9,6 +7,7 @@ use serde::Deserialize;
 use tower::BoxError;
 
 use crate::plugins::connectors::handle_responses::MappedResponse;
+use crate::plugins::connectors::mapping::Level;
 use crate::plugins::telemetry::config::AttributeValue;
 use crate::plugins::telemetry::config_new::connector::ConnectorRequest;
 use crate::plugins::telemetry::config_new::connector::ConnectorResponse;
@@ -20,7 +19,6 @@ use crate::plugins::telemetry::config_new::Selector;
 use crate::plugins::telemetry::config_new::Stage;
 use crate::services::connector::request_service::TransportRequest;
 use crate::services::connector::request_service::TransportResponse;
-use crate::services::connector_service::Level;
 use crate::Context;
 
 #[derive(Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -173,7 +171,7 @@ impl Selector for ConnectorSelector {
                     request
                         .mapping_problems
                         .iter()
-                        .map(level)
+                        .map(|problem| problem.level)
                         .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
                         .unwrap_or(Level::None)
                         .to_string(),
@@ -182,13 +180,7 @@ impl Selector for ConnectorSelector {
                     request
                         .mapping_problems
                         .iter()
-                        .flat_map(|value| {
-                            if let serde_json_bytes::Value::Number(ref number) = value["count"] {
-                                number.as_i64()
-                            } else {
-                                None
-                            }
-                        })
+                        .map(|problem| problem.count as i64)
                         .sum(),
                 )),
             },
@@ -273,24 +265,13 @@ impl Selector for ConnectorSelector {
                         MappingProblems::MaxLevel => Some(Value::String(StringValue::from(
                             problems
                                 .iter()
-                                .map(level)
+                                .map(|problem| problem.level)
                                 .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
                                 .unwrap_or(Level::None)
                                 .to_string(),
                         ))),
                         MappingProblems::Count => Some(Value::I64(
-                            problems
-                                .iter()
-                                .flat_map(|value| {
-                                    if let serde_json_bytes::Value::Number(ref number) =
-                                        value["count"]
-                                    {
-                                        number.as_i64()
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .sum(),
+                            problems.iter().map(|problem| problem.count as i64).sum(),
                         )),
                     }
                 } else {
@@ -353,14 +334,6 @@ impl Selector for ConnectorSelector {
     }
 }
 
-fn level(problem: &serde_json_bytes::Value) -> Level {
-    problem
-        .get("level")
-        .and_then(|v| v.as_str())
-        .and_then(|s| Level::from_str(s).ok())
-        .unwrap_or(Level::Error)
-}
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -385,6 +358,8 @@ mod tests {
     use super::MappingProblems;
     use crate::plugins::connectors::handle_responses::MappedResponse;
     use crate::plugins::connectors::make_requests::ResponseKey;
+    use crate::plugins::connectors::mapping::Level;
+    use crate::plugins::connectors::mapping::Problem;
     use crate::plugins::telemetry::config_new::selectors::ResponseStatus;
     use crate::plugins::telemetry::config_new::Selector;
     use crate::services::connector::request_service::transport;
@@ -392,7 +367,6 @@ mod tests {
     use crate::services::connector::request_service::Response;
     use crate::services::connector::request_service::TransportRequest;
     use crate::services::connector::request_service::TransportResponse;
-    use crate::services::connector_service::Level;
     use crate::services::router::body;
     use crate::services::router::body::RouterBody;
     use crate::Context;
@@ -462,7 +436,7 @@ mod tests {
 
     fn connector_request_with_mapping_problems(
         http_request: http::Request<RouterBody>,
-        mapping_problems: Vec<serde_json_bytes::value::Value>,
+        mapping_problems: Vec<Problem>,
     ) -> Request {
         Request {
             context: context(),
@@ -482,7 +456,7 @@ mod tests {
 
     fn connector_response_with_mapping_problems(
         status_code: StatusCode,
-        mapping_problems: Vec<serde_json_bytes::value::Value>,
+        mapping_problems: Vec<Problem>,
     ) -> Response {
         Response {
             context: context(),
@@ -528,36 +502,39 @@ mod tests {
         }
     }
 
-    fn mapping_problems() -> Vec<serde_json_bytes::value::Value> {
+    fn mapping_problems() -> Vec<Problem> {
         vec![
-            serde_json_bytes::json!({
-                "count": 1,
-                "level": "error",
-                "message": "error message",
-            }),
-            serde_json_bytes::json!({
-                "count": 2,
-                "level": "warn",
-                "message": "warn message",
-            }),
-            serde_json_bytes::json!({
-                "count": 3,
-                "level": "info",
-                "message": "info message",
-            }),
+            Problem {
+                count: 1,
+                level: Level::Error,
+                message: "error message".to_string(),
+                path: "@.id".to_string(),
+            },
+            Problem {
+                count: 2,
+                level: Level::Warn,
+                message: "warn message".to_string(),
+                path: "@.id".to_string(),
+            },
+            Problem {
+                count: 3,
+                level: Level::Info,
+                message: "info message".to_string(),
+                path: "@.id".to_string(),
+            },
         ]
     }
 
     fn mapping_problem_array() -> Value {
         Value::Array(Array::String(vec![
             StringValue::from(String::from(
-                "{\"count\":1,\"level\":\"error\",\"message\":\"error message\"}",
+                "{\"level\":\"Error\",\"message\":\"error message\",\"path\":\"@.id\",\"count\":1}",
             )),
             StringValue::from(String::from(
-                "{\"count\":2,\"level\":\"warn\",\"message\":\"warn message\"}",
+                "{\"level\":\"Warn\",\"message\":\"warn message\",\"path\":\"@.id\",\"count\":2}",
             )),
             StringValue::from(String::from(
-                "{\"count\":3,\"level\":\"info\",\"message\":\"info message\"}",
+                "{\"level\":\"Info\",\"message\":\"info message\",\"path\":\"@.id\",\"count\":3}",
             )),
         ]))
     }

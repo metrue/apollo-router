@@ -479,7 +479,9 @@
                 "mapping_problems": {
                   "default": [],
                   "type": "array",
-                  "items": true
+                  "items": {
+                    "$ref": "#/definitions/Problem"
+                  }
                 },
                 "source_name": {
                   "type": "string"
@@ -532,7 +534,9 @@
                 "mapping_problems": {
                   "default": [],
                   "type": "array",
-                  "items": true
+                  "items": {
+                    "$ref": "#/definitions/Problem"
+                  }
                 },
                 "source_name": {
                   "type": "string"
@@ -556,6 +560,16 @@
         }
       ]
     },
+    "Level": {
+      "description": "The level of a mapping problem",
+      "type": "string",
+      "enum": [
+        "Error",
+        "Warn",
+        "Info",
+        "None"
+      ]
+    },
     "OperationKind": {
       "description": "GraphQL operation type.",
       "type": "string",
@@ -564,6 +578,32 @@
         "mutation",
         "subscription"
       ]
+    },
+    "Problem": {
+      "description": "A mapping problem",
+      "type": "object",
+      "required": [
+        "count",
+        "level",
+        "message",
+        "path"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "level": {
+          "$ref": "#/definitions/Level"
+        },
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
     },
     "TypedValueMirror": {
       "oneOf": [

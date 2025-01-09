@@ -10,7 +10,8 @@ use tracing::Span;
 use crate::graphql;
 use crate::json_ext::Path;
 use crate::plugins::connectors::make_requests::ResponseKey;
-use crate::plugins::connectors::plugin::debug::aggregate_apply_to_errors;
+use crate::plugins::connectors::mapping::aggregate_apply_to_errors;
+use crate::plugins::connectors::mapping::Problem;
 use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::plugins::connectors::plugin::debug::ConnectorDebugHttpRequest;
 use crate::plugins::connectors::plugin::debug::SelectionData;
@@ -193,7 +194,7 @@ pub(crate) enum MappedResponse {
     Data {
         data: Value,
         key: ResponseKey,
-        problems: Vec<Value>,
+        problems: Vec<Problem>,
     },
 }
 

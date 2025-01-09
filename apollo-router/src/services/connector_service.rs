@@ -1,7 +1,6 @@
 //! Tower service for connectors.
 
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::Poll;
@@ -59,40 +58,6 @@ pub(crate) struct ConnectorService {
     pub(crate) _subscription_config: Option<SubscriptionConfig>,
     pub(crate) connectors_by_service_name: Arc<IndexMap<Arc<str>, Connector>>,
     pub(crate) connector_request_service_factory: Arc<ConnectorRequestServiceFactory>,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-pub(crate) enum Level {
-    Error = 0,
-    Warn = 1,
-    Info = 2,
-    None = 3,
-}
-
-impl Display for Level {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
-            Level::Error => "error".to_string(),
-            Level::Warn => "warn".to_string(),
-            Level::Info => "info".to_string(),
-            Level::None => "none".to_string(),
-        };
-        write!(f, "{}", str)
-    }
-}
-
-impl FromStr for Level {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "error" => Ok(Level::Error),
-            "warn" => Ok(Level::Warn),
-            "info" => Ok(Level::Info),
-            "none" => Ok(Level::None),
-            _ => Err(format!("Invalid problem level: {}", s)),
-        }
-    }
 }
 
 /// A reference to a unique Connector source.
