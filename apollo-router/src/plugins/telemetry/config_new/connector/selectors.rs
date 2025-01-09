@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use derivative::Derivative;
 use opentelemetry_api::Array;
 use opentelemetry_api::StringValue;
@@ -157,44 +159,39 @@ impl Selector for ConnectorSelector {
             }
             ConnectorSelector::RequestMappingProblems {
                 connector_request_mapping_problems: mapping_problems,
-            } => {
-                match mapping_problems {
-                    MappingProblems::Problems => Some(Value::Array(Array::String(
-                        request
-                            .mapping_problems
-                            .iter()
-                            .filter_map(|problem| {
-                                serde_json::to_string(problem).ok().map(StringValue::from)
-                            })
-                            .collect(),
-                    ))),
-                    MappingProblems::MaxLevel => Some(Value::String(StringValue::from(
-                        request
-                            .mapping_problems
-                            .iter()
-                            .map(|_| {
-                                Level::Error // TODO use level from problem when available
-                            })
-                            .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
-                            .unwrap_or(Level::None)
-                            .to_string(),
-                    ))),
-                    MappingProblems::Count => Some(Value::I64(
-                        request
-                            .mapping_problems
-                            .iter()
-                            .flat_map(|value| {
-                                if let serde_json_bytes::Value::Number(ref number) = value["count"]
-                                {
-                                    number.as_i64()
-                                } else {
-                                    None
-                                }
-                            })
-                            .sum(),
-                    )),
-                }
-            }
+            } => match mapping_problems {
+                MappingProblems::Problems => Some(Value::Array(Array::String(
+                    request
+                        .mapping_problems
+                        .iter()
+                        .filter_map(|problem| {
+                            serde_json::to_string(problem).ok().map(StringValue::from)
+                        })
+                        .collect(),
+                ))),
+                MappingProblems::MaxLevel => Some(Value::String(StringValue::from(
+                    request
+                        .mapping_problems
+                        .iter()
+                        .map(level)
+                        .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
+                        .unwrap_or(Level::None)
+                        .to_string(),
+                ))),
+                MappingProblems::Count => Some(Value::I64(
+                    request
+                        .mapping_problems
+                        .iter()
+                        .flat_map(|value| {
+                            if let serde_json_bytes::Value::Number(ref number) = value["count"] {
+                                number.as_i64()
+                            } else {
+                                None
+                            }
+                        })
+                        .sum(),
+                )),
+            },
             ConnectorSelector::StaticField { r#static } => Some(r#static.clone().into()),
             _ => None,
         }
@@ -276,9 +273,7 @@ impl Selector for ConnectorSelector {
                         MappingProblems::MaxLevel => Some(Value::String(StringValue::from(
                             problems
                                 .iter()
-                                .map(|_| {
-                                    Level::Error // TODO use level from problem when available
-                                })
+                                .map(level)
                                 .min_by(|a, b| (*a as u32).cmp(&(*b as u32)))
                                 .unwrap_or(Level::None)
                                 .to_string(),
@@ -356,6 +351,14 @@ impl Selector for ConnectorSelector {
             Stage::Drop => matches!(self, ConnectorSelector::StaticField { .. }),
         }
     }
+}
+
+fn level(problem: &serde_json_bytes::Value) -> Level {
+    problem
+        .get("level")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Level::from_str(s).ok())
+        .unwrap_or(Level::Error)
 }
 
 #[cfg(test)]

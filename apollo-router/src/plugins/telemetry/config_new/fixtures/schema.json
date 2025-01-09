@@ -476,6 +476,11 @@
                 "http_method": {
                   "type": "string"
                 },
+                "mapping_problems": {
+                  "default": [],
+                  "type": "array",
+                  "items": true
+                },
                 "source_name": {
                   "type": "string"
                 },
@@ -523,6 +528,11 @@
                 },
                 "http_method": {
                   "type": "string"
+                },
+                "mapping_problems": {
+                  "default": [],
+                  "type": "array",
+                  "items": true
                 },
                 "source_name": {
                   "type": "string"

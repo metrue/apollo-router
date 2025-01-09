@@ -81,6 +81,20 @@ impl Display for Level {
     }
 }
 
+impl FromStr for Level {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "error" => Ok(Level::Error),
+            "warn" => Ok(Level::Warn),
+            "info" => Ok(Level::Info),
+            "none" => Ok(Level::None),
+            _ => Err(format!("Invalid problem level: {}", s)),
+        }
+    }
+}
+
 /// A reference to a unique Connector source.
 #[derive(Hash, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub(crate) struct ConnectorSourceRef {

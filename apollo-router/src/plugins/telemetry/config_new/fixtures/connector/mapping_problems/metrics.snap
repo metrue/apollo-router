@@ -1,0 +1,59 @@
+---
+source: apollo-router/src/plugins/telemetry/config_new/instruments.rs
+description: Both subgraph and connector HTTP client duration metrics
+expression: "&metrics.all()"
+info:
+  telemetry:
+    instrumentation:
+      instruments:
+        default_requirement_level: none
+        connector:
+          request.mapping.problems:
+            description: Count of connectors request mapping problems
+            value:
+              connector_request_mapping_problems: count
+            attributes:
+              connector.source:
+                connector_source: name
+              max.error.level:
+                connector_request_mapping_problems: max_level
+            unit: count
+            type: counter
+          response.mapping.problems:
+            description: Count of connectors response mapping problems
+            value:
+              connector_response_mapping_problems: count
+            attributes:
+              connector.source:
+                connector_source: name
+              max.error.level:
+                connector_response_mapping_problems: max_level
+            unit: count
+            type: counter
+---
+- name: request.mapping.problems
+  description: Count of connectors request mapping problems
+  unit: count
+  data:
+    datapoints:
+      - value: 5
+        attributes:
+          connector.source: user_api
+          max.error.level: info
+      - value: 10
+        attributes:
+          connector.source: user_api
+          max.error.level: warn
+- name: response.mapping.problems
+  description: Count of connectors response mapping problems
+  unit: count
+  data:
+    datapoints:
+      - value: 2
+        attributes:
+          connector.source: user_api
+          max.error.level: error
+      - value: 3
+        attributes:
+          connector.source: user_api
+          max.error.level: info

@@ -2788,6 +2788,9 @@ mod tests {
             #[serde(default)]
             headers: HashMap<String, String>,
             body: Option<String>,
+            #[serde(default)]
+            #[schemars(with = "Vec<serde_json::Value>")]
+            mapping_problems: Vec<Value>,
         },
         ConnectorResponse {
             subgraph_name: String,
@@ -2798,6 +2801,9 @@ mod tests {
             #[serde(default)]
             headers: HashMap<String, String>,
             body: String,
+            #[serde(default)]
+            #[schemars(with = "Vec<serde_json::Value>")]
+            mapping_problems: Vec<Value>,
         },
     }
 
@@ -3232,6 +3238,7 @@ mod tests {
                                     uri,
                                     headers,
                                     body,
+                                    mapping_problems,
                                 } => {
                                     let mut http_request = http::Request::builder()
                                         .method(Method::from_str(&http_method).expect("method"))
@@ -3284,7 +3291,7 @@ mod tests {
                                         connector: Arc::new(connector),
                                         transport_request,
                                         key: response_key.clone(),
-                                        mapping_problems: vec![], // TODO: ability to add mapping problems
+                                        mapping_problems,
                                     };
                                     connector_instruments = Some({
                                         let connector_instruments = config
@@ -3303,6 +3310,7 @@ mod tests {
                                     status,
                                     headers,
                                     body,
+                                    mapping_problems,
                                 } => {
                                     let connector = Connector {
                                         id: ConnectId::new(
@@ -3353,11 +3361,11 @@ mod tests {
                                             },
                                         )),
                                         mapped_response: MappedResponse::Data {
-                                            data: serde_json::json!({})
+                                            data: json!({})
                                                 .try_into()
                                                 .expect("expecting valid JSON"),
                                             key: response_key,
-                                            problems: vec![], // TODO: ability to add mapping problems
+                                            problems: mapping_problems,
                                         },
                                     };
                                     connector_instruments
