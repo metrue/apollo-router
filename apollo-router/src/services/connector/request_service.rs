@@ -241,19 +241,17 @@ impl tower::Service<Request> for ConnectorRequestService {
                                 .get(&service_name.to_string())
                                 .cloned()
                             {
-                                match http_client_service_factory
+                                http_client_service_factory
                                     .create(&original_subgraph_name)
                                     .oneshot(crate::services::http::HttpRequest {
                                         http_request: http_request.inner,
                                         context: request.context.clone(),
                                     })
                                     .await
-                                {
-                                    Ok(res) => Ok(res.http_response),
-                                    Err(e) => Err(Error::TransportFailure(
-                                        handle_subrequest_http_error(e, &request.connector),
-                                    )),
-                                }
+                                    .map(|result| result.http_response)
+                                    .map_err(|e| {
+                                        replace_subgraph_name(e, &request.connector).into()
+                                    })
                             } else {
                                 Err(Error::TransportFailure("no http client found".into()))
                             }
@@ -273,6 +271,7 @@ impl tower::Service<Request> for ConnectorRequestService {
 
                 result
             };
+
             Ok(process_response(
                 result,
                 response_key.clone(),
@@ -286,9 +285,9 @@ impl tower::Service<Request> for ConnectorRequestService {
     }
 }
 
-fn handle_subrequest_http_error(err: BoxError, connector: &Connector) -> BoxError {
+/// Replace the internal subgraph name in an error with the connector label
+fn replace_subgraph_name(err: BoxError, connector: &Connector) -> BoxError {
     match err.downcast::<FetchError>() {
-        // Replace the internal subgraph name with the connector label
         Ok(inner) => match *inner {
             FetchError::SubrequestHttpError {
                 status_code,
