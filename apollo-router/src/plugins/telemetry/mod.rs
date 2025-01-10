@@ -133,6 +133,7 @@ use crate::plugins::telemetry::tracing::TracingConfigurator;
 use crate::query_planner::OperationKind;
 use crate::register_private_plugin;
 use crate::router_factory::Endpoint;
+use crate::services::connector;
 use crate::services::execution;
 use crate::services::router;
 use crate::services::subgraph;
@@ -869,14 +870,14 @@ impl PluginPrivate for Telemetry {
 
     fn connector_request_service(
         &self,
-        service: crate::services::connector::request_service::BoxService,
-    ) -> crate::services::connector::request_service::BoxService {
+        service: connector::request_service::BoxService,
+    ) -> connector::request_service::BoxService {
         let req_fn_config = self.config.clone();
         let res_fn_config = self.config.clone();
         let static_connector_instruments = self.connector_custom_instruments.read().clone();
         ServiceBuilder::new()
             .map_future_with_request_data(
-                move |request: &crate::services::connector::request_service::Request| {
+                move |request: &connector::request_service::Request| {
                     let custom_instruments = req_fn_config
                         .instrumentation
                         .instruments

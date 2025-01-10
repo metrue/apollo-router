@@ -26,7 +26,6 @@ use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::plugins::connectors::tracing::connect_spec_version_instrument;
 use crate::plugins::connectors::tracing::CONNECTOR_TYPE_HTTP;
 use crate::plugins::subscription::SubscriptionConfig;
-use crate::plugins::telemetry::consts::CONNECT_REQUEST_SPAN_NAME;
 use crate::plugins::telemetry::consts::CONNECT_SPAN_NAME;
 use crate::services::connector::request_service::ConnectorRequestServiceFactory;
 use crate::services::ConnectRequest;
@@ -197,15 +196,11 @@ async fn execute(
                 .context
                 .insert(CONNECTOR_SERVICE_NAME_CONTEXT_KEY, service_name.clone())
                 .unwrap();
+
             async move {
                 connector_request_service_factory
                     .create()
                     .oneshot(request)
-                    .instrument(tracing::info_span!(
-                        CONNECT_REQUEST_SPAN_NAME,
-                        "otel.kind" = "INTERNAL",
-                        "otel.status_code" = tracing::field::Empty,
-                    ))
                     .await
             }
         });

@@ -11,11 +11,13 @@ use static_assertions::assert_impl_all;
 use tower::BoxError;
 use tower::ServiceBuilder;
 use tower::ServiceExt;
+use tracing::info_span;
 
 use crate::error::FetchError;
 use crate::graphql;
 use crate::graphql::ErrorExtension;
 use crate::json_ext::Path;
+use crate::layers::ServiceBuilderExt;
 use crate::plugins::connectors::handle_responses::process_response;
 use crate::plugins::connectors::handle_responses::MappedResponse;
 use crate::plugins::connectors::make_requests::ResponseKey;
@@ -24,6 +26,7 @@ use crate::plugins::connectors::plugin::debug::ConnectorContext;
 use crate::plugins::connectors::plugin::debug::ConnectorDebugHttpRequest;
 use crate::plugins::connectors::request_limit::RequestLimits;
 use crate::plugins::connectors::tracing::CONNECTOR_TYPE_HTTP;
+use crate::plugins::telemetry::consts::CONNECT_REQUEST_SPAN_NAME;
 use crate::services::connector::request_service::transport::http::HttpRequest;
 use crate::services::connector::request_service::transport::http::HttpResponse;
 use crate::services::connector_service::CONNECTOR_SERVICE_NAME_CONTEXT_KEY;
@@ -169,6 +172,13 @@ impl ServiceFactory<Request> for ConnectorRequestServiceFactory {
 
     fn create(&self) -> Self::Service {
         ServiceBuilder::new()
+            .instrument(|_| {
+                info_span!(
+                    CONNECT_REQUEST_SPAN_NAME,
+                    "otel.kind" = "INTERNAL",
+                    "otel.status_code" = tracing::field::Empty,
+                )
+            })
             .service(
                 self.plugins.iter().rev().fold(
                     ConnectorRequestService {
