@@ -80,7 +80,6 @@ macro_rules! impl_arrow_method {
                 dollar_shape: Shape,
                 named_var_shapes: &IndexMap<&str, Shape>,
             ) -> Shape {
-                // TODO
                 $shape_fn_name(
                     method_name,
                     method_args,
