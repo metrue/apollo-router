@@ -3288,6 +3288,7 @@ mod tests {
                                     let request = Request {
                                         context: Context::default(),
                                         connector: Arc::new(connector),
+                                        service_name: Default::default(),
                                         transport_request,
                                         key: response_key.clone(),
                                         mapping_problems,

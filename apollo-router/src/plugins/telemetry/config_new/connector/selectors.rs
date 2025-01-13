@@ -247,12 +247,7 @@ impl Selector for ConnectorSelector {
             ConnectorSelector::ResponseMappingProblems {
                 connector_response_mapping_problems: mapping_problems,
             } => {
-                if let MappedResponse::Data {
-                    data: _,
-                    key: _,
-                    ref problems,
-                } = response.mapped_response
-                {
+                if let MappedResponse::Data { ref problems, .. } = response.mapped_response {
                     match mapping_problems {
                         MappingProblems::Problems => Some(Value::Array(Array::String(
                             problems
@@ -441,6 +436,7 @@ mod tests {
         Request {
             context: context(),
             connector: Arc::new(connector()),
+            service_name: Default::default(),
             transport_request: TransportRequest::Http(transport::http::HttpRequest {
                 inner: http_request,
                 debug: None,

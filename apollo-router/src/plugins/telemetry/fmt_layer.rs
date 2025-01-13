@@ -897,6 +897,7 @@ connector:
                 let connector_request = Request {
                     context: context.clone(),
                     connector: Arc::new(connector.clone()),
+                    service_name: Default::default(),
                     transport_request,
                     key: response_key.clone(),
                     mapping_problems: vec![
@@ -1149,6 +1150,7 @@ connector:
                 let connector_request = Request {
                     context: context.clone(),
                     connector: Arc::new(connector.clone()),
+                    service_name: Default::default(),
                     transport_request,
                     key: response_key.clone(),
                     mapping_problems: vec![

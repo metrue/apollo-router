@@ -29,7 +29,6 @@ use crate::plugins::connectors::tracing::CONNECTOR_TYPE_HTTP;
 use crate::plugins::telemetry::consts::CONNECT_REQUEST_SPAN_NAME;
 use crate::services::connector::request_service::transport::http::HttpRequest;
 use crate::services::connector::request_service::transport::http::HttpResponse;
-use crate::services::connector_service::CONNECTOR_SERVICE_NAME_CONTEXT_KEY;
 use crate::services::http::HttpClientServiceFactory;
 use crate::services::new_service::ServiceFactory;
 use crate::services::Plugins;
@@ -54,6 +53,9 @@ pub(crate) struct Request {
     //  internal information about the connector. A new type may be needed which exposes only
     //  what is necessary for customizations.
     pub(crate) connector: Arc<Connector>,
+
+    /// The service name for this connector
+    pub(crate) service_name: String,
 
     /// The request to the underlying transport
     pub(crate) transport_request: TransportRequest,
@@ -209,9 +211,6 @@ impl tower::Service<Request> for ConnectorRequestService {
 
     fn call(&mut self, request: Request) -> Self::Future {
         let original_subgraph_name = request.connector.id.subgraph_name.to_string();
-        let service_name = request
-            .context
-            .get::<&str, Arc<str>>(CONNECTOR_SERVICE_NAME_CONTEXT_KEY);
         let http_client_service_factory = self.http_client_service_factory.clone();
         let (debug, request_limit) = request.context.extensions().with_lock(|lock| {
             let debug = lock.get::<Arc<Mutex<ConnectorContext>>>().cloned();
@@ -229,34 +228,27 @@ impl tower::Service<Request> for ConnectorRequestService {
 
         Box::pin(async move {
             let mut debug_request: Option<ConnectorDebugHttpRequest> = None;
-            let response_key = request.key;
             let result = if request_limit.is_some_and(|request_limit| !request_limit.allow()) {
                 Err(Error::RequestLimitExceeded)
             } else {
                 let result = match request.transport_request {
                     TransportRequest::Http(http_request) => {
                         debug_request = http_request.debug;
-                        if let Ok(Some(service_name)) = service_name {
-                            if let Some(http_client_service_factory) = http_client_service_factory
-                                .get(&service_name.to_string())
-                                .cloned()
-                            {
-                                http_client_service_factory
-                                    .create(&original_subgraph_name)
-                                    .oneshot(crate::services::http::HttpRequest {
-                                        http_request: http_request.inner,
-                                        context: request.context.clone(),
-                                    })
-                                    .await
-                                    .map(|result| result.http_response)
-                                    .map_err(|e| {
-                                        replace_subgraph_name(e, &request.connector).into()
-                                    })
-                            } else {
-                                Err(Error::TransportFailure("no http client found".into()))
-                            }
+                        if let Some(http_client_service_factory) = http_client_service_factory
+                            .get(&request.service_name)
+                            .cloned()
+                        {
+                            http_client_service_factory
+                                .create(&original_subgraph_name)
+                                .oneshot(crate::services::http::HttpRequest {
+                                    http_request: http_request.inner,
+                                    context: request.context.clone(),
+                                })
+                                .await
+                                .map(|result| result.http_response)
+                                .map_err(|e| replace_subgraph_name(e, &request.connector).into())
                         } else {
-                            Err(Error::TransportFailure("no service name found".into()))
+                            Err(Error::TransportFailure("no http client found".into()))
                         }
                     }
                 };
@@ -274,7 +266,7 @@ impl tower::Service<Request> for ConnectorRequestService {
 
             Ok(process_response(
                 result,
-                response_key.clone(),
+                request.key.clone(),
                 &request.connector,
                 &request.context,
                 debug_request,
