@@ -15,6 +15,7 @@ use schemars::JsonSchema;
 use serde::de::MapAccess;
 use serde::de::Visitor;
 use serde::Deserialize;
+use serde::Serialize;
 use serde::Deserializer;
 
 use crate::plugins::telemetry::config::AttributeValue;
@@ -22,7 +23,7 @@ use crate::plugins::telemetry::config::TraceIdFormat;
 use crate::plugins::telemetry::resource::ConfigResource;
 
 /// Logging configuration.
-#[derive(Deserialize, JsonSchema, Clone, Default, Debug)]
+#[derive(Deserialize, Serialize, JsonSchema, Clone, Default, Debug)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Logging {
     /// Common configuration
@@ -34,7 +35,7 @@ pub(crate) struct Logging {
     pub(crate) file: File,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct LoggingCommon {
     /// Set a service.name resource in your metrics

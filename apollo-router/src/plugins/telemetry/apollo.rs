@@ -48,7 +48,7 @@ pub(crate) fn router_id() -> String {
     ROUTER_ID.get_or_init(Uuid::new_v4).to_string()
 }
 
-#[derive(Clone, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Deserialize, Serialize, JsonSchema, Debug)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Config {
     /// The Apollo Studio endpoint for exporting traces and metrics.

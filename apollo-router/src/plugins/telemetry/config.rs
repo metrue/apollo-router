@@ -57,7 +57,7 @@ where
 impl<T> GenericWith<T> for T where Self: Sized {}
 
 /// Telemetry configuration
-#[derive(Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Conf {
     /// Apollo reporting configuration
@@ -71,7 +71,7 @@ pub(crate) struct Conf {
 }
 
 /// Exporter configuration
-#[derive(Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Exporters {
     /// Logging configuration
@@ -83,7 +83,7 @@ pub(crate) struct Exporters {
 }
 
 /// Instrumentation configuration
-#[derive(Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Instrumentation {
     /// Event configuration
@@ -114,7 +114,7 @@ pub(crate) struct Metrics {
     pub(crate) prometheus: metrics::prometheus::Config,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct MetricsCommon {
     /// Set a service.name resource in your metrics

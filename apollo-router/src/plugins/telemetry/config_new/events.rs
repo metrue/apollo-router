@@ -10,6 +10,7 @@ use opentelemetry_semantic_conventions::trace::HTTP_REQUEST_METHOD;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde::Serialize;
 use tower::BoxError;
 use tracing::info_span;
 use tracing::Span;
@@ -53,7 +54,7 @@ pub(crate) struct DisplayRouterResponse(pub(crate) bool);
 pub(crate) struct RouterResponseBodyExtensionType(pub(crate) String);
 
 /// Events are
-#[derive(Deserialize, JsonSchema, Clone, Default, Debug)]
+#[derive(Deserialize, Serialize, JsonSchema, Clone, Default, Debug)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Events {
     /// Router service events
@@ -532,7 +533,7 @@ impl Instrumented
     }
 }
 
-#[derive(Clone, Deserialize, JsonSchema, Debug, Default)]
+#[derive(Clone, Deserialize, Serialize, JsonSchema, Debug, Default)]
 #[serde(deny_unknown_fields, default)]
 struct RouterEventsConfig {
     /// Log the router request
@@ -572,7 +573,7 @@ struct SubgraphEventsConfig {
     error: StandardEventConfig<SubgraphSelector>,
 }
 
-#[derive(Deserialize, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Serialize, JsonSchema, Clone, Debug)]
 #[serde(untagged)]
 pub(crate) enum StandardEventConfig<T> {
     Level(EventLevel),
